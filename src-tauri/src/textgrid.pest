@@ -1,0 +1,59 @@
+starter1 = _{ "File type = \"ooTextFile\"" }
+starter2 = _{ "Object class = \"TextGrid\"" }
+
+char  = _{ ASCII_ALPHANUMERIC | "." | "_" | "/" }
+ident = @{ char+ }
+
+integer = { ("+" | "-")? ~ DECIMAL_NUMBER ~ (DECIMAL_NUMBER | "_")* }
+exp = { ^"e" ~ integer }
+floating = @{
+    integer ~ "." ~ integer? ~ exp? |
+    integer ~ exp
+}
+
+escaped_quote = _{ "\\\"" | "\"" ~ "\"" }
+escaped_char = _{ "\\" ~ ("n" | "t" | "\\" | "r" | "b" | "f") }
+normal_char = _{ (!("\"" | "\\") ~ ANY) | "\\" ~ (!"\"" ~ ANY) }
+outer_string = _{ "\"" ~ string ~ "\"" }
+string = @{ (escaped_char | escaped_quote | normal_char)* }
+
+property = { WHITE_SPACE* ~ ident ~ WHITE_SPACE* ~ "=" ~ WHITE_SPACE* ~ (floating | integer | outer_string) }
+
+array_size = {
+	WHITE_SPACE* ~ ("intervals" | "points") ~ ": size" ~
+    WHITE_SPACE* ~ "=" ~ WHITE_SPACE* ~ integer
+}
+exist_text = { "<exists>" | "<absent>" }
+tier_exist = { "tiers? " ~ exist_text }
+
+single_interval = {
+	WHITE_SPACE* ~ "intervals [" ~ integer ~ "]:" ~ NEWLINE+ ~
+    (property ~ NEWLINE*)+
+}
+
+single_point = {
+	WHITE_SPACE* ~ "points [" ~ integer ~ "]:" ~ NEWLINE+ ~
+    (property ~ NEWLINE*)+
+}
+
+single_item = {
+	WHITE_SPACE* ~ "item [" ~ integer ~ "]:" ~ NEWLINE+ ~
+    WHITE_SPACE* ~ "class" ~ WHITE_SPACE* ~ "=" ~ WHITE_SPACE* ~ ("\"IntervalTier\"" | "\"TextTier\"") ~
+    (property ~ NEWLINE*)+ ~
+    array_size ~ NEWLINE* ~
+    ((single_interval | single_point) ~ NEWLINE*)+
+}
+
+items = {
+	"item []:" ~ NEWLINE+ ~
+    single_item*
+}
+
+file = {
+    SOI ~
+    (starter1 ~ NEWLINE+) ~
+    (starter2 ~ NEWLINE+) ~
+    ((property | tier_exist) ~ NEWLINE*)+ ~
+    items ~
+    EOI
+}

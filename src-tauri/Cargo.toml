@@ -1,0 +1,36 @@
+[package]
+name = "app"
+version = "0.1.0"
+description = "A Tauri App"
+authors = ["you"]
+license = ""
+repository = ""
+edition = "2021"
+rust-version = "1.70"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.0.0-beta.17", features = [] }
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+tauri = { version = "2.0.0-beta.22", features = [] }
+tauri-plugin-dialog = "2.0.0-beta"
+tauri-plugin-fs = "2.0.0-beta"
+tauri-plugin-persisted-scope = "2.0.0-beta"
+tauri-plugin-shell = "2.0.0-beta"
+tauri-plugin-single-instance = "2.0.0-beta"
+tauri-plugin-window-state = "2.0.0-beta"
+pest = "2.7.10"
+pest_derive = "2.7.10"
+chardet = "0.2.4"
+chardetng = "0.1.17"
+encoding_rs = "0.8.34"
+encoding_rs_io = "0.1.7"
+rodio = "0.18.1"
