@@ -1,3 +1,4 @@
+use std::cmp::{max, min};
 use std::collections::HashSet;
 use std::default::Default;
 use tauri::{Manager, State};
@@ -77,7 +78,7 @@ impl TextGrid {
 #[derive(Clone, Default, serde::Serialize)]
 struct ReplaceRule {
     rule_name: String,
-    find_word: Vec<String>,
+    search_terms: Vec<String>,
     replace_options: Vec<String>,
 }
 
@@ -97,11 +98,18 @@ struct ItemRecord {
     tg_content: TextGrid,
     wav_file: Option<PathBuf>,
     found_tiers: Vec<usize>,
+    found_tiers_title: Vec<String>,
 }
 
 #[derive(Clone, Default, serde::Serialize)]
 struct SessionItems {
     items: Vec<ItemRecord>
+}
+
+#[derive(Clone, Default, serde::Serialize)]
+struct ItemSelectionState {
+    selected_item: Option<i32>,
+    selected_found: Option<i32>,
 }
 
 /// Internal function that builds a `FadeOut` object.
@@ -261,15 +269,26 @@ fn parse_textgrid(tg_file: PathBuf) -> Result<TextGrid, String> {
     Ok(tg)
 }
 
-fn check_rule(rule: &ReplaceRule, tg: &TextGrid) -> Vec<usize> {
+fn check_rule(rule: &ReplaceRule, tg: &TextGrid) -> (Vec<usize>, Vec<String>) {
     let mut found_tiers = Vec::new();
-    let find_word_set = rule.find_word.iter().collect::<HashSet<_>>();
-    for (i, item) in tg.items.last().unwrap().intervals.iter().enumerate() {
+    let mut found_tiers_title = Vec::new();
+    let find_word_set = rule.search_terms.iter().collect::<HashSet<_>>();
+    let tg_intervals = &tg.items.last().unwrap().intervals;
+    for (i, item) in tg_intervals.iter().enumerate() {
         if find_word_set.contains(&item.text) {
             found_tiers.push(i);
+            let mut title = String::new();
+            for j in min(0usize, i - 2) .. min(0usize, i - 1) {
+                title.push_str((tg_intervals[j].text.clone() + " ").as_str());
+            }
+            title.push_str(("<b>".to_owned() + &tg_intervals[i].text.clone() + "</b> ").as_str());
+            for j in max(i + 1, tg_intervals.len() - 1) .. max(i + 2, tg_intervals.len() - 1) {
+                title.push_str((tg_intervals[j].text.clone() + " ").as_str());
+            }
+            found_tiers_title.push(title);
         }
     }
-    found_tiers
+    (found_tiers, found_tiers_title)
 }
 
 
@@ -277,20 +296,25 @@ fn check_rule(rule: &ReplaceRule, tg: &TextGrid) -> Vec<usize> {
 fn add_rule(rule_name: String, app: tauri::AppHandle, state: State<'_, Mutex<AppProjectState>>) -> Result<(), String> {
     let mut proj_state = state.lock().unwrap();
     if proj_state.rules.iter().any(|rule| rule.rule_name == rule_name) {
-        return Ok(());
+        let selected_rule = proj_state.rules.iter().position(|rule| rule.rule_name == rule_name).unwrap();
+        if proj_state.active_rule != Some(selected_rule as i32) {
+            proj_state.active_rule = Some(selected_rule as i32);
+            proj_state.selected_word = None;
+            proj_state.selected_replacement = None;
+        }
+    } else {
+        proj_state.rules.push(ReplaceRule {
+            rule_name,
+            search_terms: Vec::new().into_iter().collect(),
+            replace_options: Vec::new(),
+        });
+        proj_state.active_rule = Some((proj_state.rules.len() - 1) as i32);
+        proj_state.selected_word = None;
+        proj_state.selected_replacement = None;
     }
-    proj_state.rules.push(ReplaceRule {
-        rule_name,
-        find_word: Vec::new().into_iter().collect(),
-        replace_options: Vec::new(),
-    });
-    proj_state.active_rule = Some((proj_state.rules.len() - 1) as i32);
-    proj_state.selected_word = None;
-    proj_state.selected_replacement = None;
     let _ = app.emit("sync_app_state", proj_state.clone());
     Ok(())
 }
-
 
 #[tauri::command]
 fn rename_rule(rule_index: i32, rule_name: String, app: tauri::AppHandle, state: State<'_, Mutex<AppProjectState>>) -> Result<(), String> {
@@ -298,7 +322,7 @@ fn rename_rule(rule_index: i32, rule_name: String, app: tauri::AppHandle, state:
     if proj_state.rules.iter().any(|rule| rule.rule_name == rule_name) {
         return Ok(());
     }
-    if rule_index >= 0 && rule_index < proj_state.rules.len() as i32 && proj_state.rules.get(rule_index as usize).unwrap().rule_name == rule_name {
+    if rule_index >= 0 && rule_index < proj_state.rules.len() as i32 {
         proj_state.rules.get_mut(rule_index as usize).unwrap().rule_name = rule_name;
         let _ = app.emit("sync_app_state", proj_state.clone());
     }
@@ -330,30 +354,30 @@ fn select_rule(rule_index: i32, app: tauri::AppHandle, state: State<'_, Mutex<Ap
         proj_state.active_rule = None;
         proj_state.selected_word = None;
         proj_state.selected_replacement = None;
+    } else if proj_state.active_rule == Some(rule_index) {
     } else {
         proj_state.active_rule = Some(rule_index);
-        proj_state.selected_word = if proj_state.rules.get(rule_index as usize).unwrap().find_word.is_empty() { None } else { Some(0) };
+        proj_state.selected_word = if proj_state.rules.get(rule_index as usize).unwrap().search_terms.is_empty() { None } else { Some(0) };
         proj_state.selected_replacement = if proj_state.rules.get(rule_index as usize).unwrap().replace_options.is_empty() { None } else { Some(0) };
     }
     let _ = app.emit("sync_app_selection_state", (proj_state.active_rule, proj_state.selected_word, proj_state.selected_replacement));
     Ok(())
 }
 
-
-// Write similar add, rename, delete, select commands for "find_word" and "replace_options", remember that one additional rule_index is needed.
 #[tauri::command]
 fn add_find_phoneme(rule_index: i32, word: String, app: tauri::AppHandle, state: State<'_, Mutex<AppProjectState>>) -> Result<(), String> {
     let mut proj_state = state.lock().unwrap();
-    let mut words = &proj_state.rules.get_mut(rule_index as usize).unwrap().find_word;
     if rule_index < 0 || rule_index >= proj_state.rules.len() as i32 {
-        return Ok(());
-    }
-    if words.iter().any(|w| w == &word) {
-        proj_state.selected_word = Some(words.iter().position(|w| w == &word).unwrap() as i32);
         return Ok(());
     }
     if proj_state.active_rule != Some(rule_index) {
         proj_state.active_rule = Some(rule_index);
+    }
+    let mut words = &mut proj_state.rules.get_mut(rule_index as usize).unwrap().search_terms;
+    if words.iter().any(|w| w == &word) {
+        proj_state.selected_word = Some(words.iter().position(|w| w == &word).unwrap() as i32);
+        let _ = app.emit("sync_app_selection_state", (proj_state.active_rule, proj_state.selected_word, proj_state.selected_replacement));
+        return Ok(());
     }
     words.push(word);
     proj_state.selected_word = Some(words.len() as i32 - 1);
@@ -364,12 +388,15 @@ fn add_find_phoneme(rule_index: i32, word: String, app: tauri::AppHandle, state:
 #[tauri::command]
 fn remove_find_phoneme(rule_index: i32, word_index: i32, app: tauri::AppHandle, state: State<'_, Mutex<AppProjectState>>) -> Result<(), String> {
     let mut proj_state = state.lock().unwrap();
-    if rule_index < 0 || rule_index >= proj_state.rules.len() as i32 || word_index < 0 || word_index >= proj_state.rules.get(rule_index as usize).unwrap().find_word.len() as i32 {
+    if rule_index < 0 || rule_index >= proj_state.rules.len() as i32 || word_index < 0 || word_index >= proj_state.rules.get(rule_index as usize).unwrap().search_terms.len() as i32 {
         return Ok(());
     }
-    let mut words = &mut proj_state.rules.get_mut(rule_index as usize).unwrap().find_word;
-    words.remove(word_index as usize);
+    if proj_state.active_rule != Some(rule_index) {
+        proj_state.active_rule = Some(rule_index);
+    }
     if proj_state.selected_word == Some(word_index) {
+        let mut words = &mut proj_state.rules.get_mut(rule_index as usize).unwrap().search_terms;
+        words.remove(word_index as usize);
         if word_index >= words.len() as i32 {
             proj_state.selected_word = if words.is_empty() { None } else { Some(words.len() as i32 - 1) };
         }
@@ -381,10 +408,13 @@ fn remove_find_phoneme(rule_index: i32, word_index: i32, app: tauri::AppHandle, 
 #[tauri::command]
 fn rename_find_phoneme(rule_index: i32, word_index: i32, new_word: String, app: tauri::AppHandle, state: State<'_, Mutex<AppProjectState>>) -> Result<(), String> {
     let mut proj_state = state.lock().unwrap();
-    if rule_index < 0 || rule_index >= proj_state.rules.len() as i32 || word_index < 0 || word_index >= proj_state.rules.get(rule_index as usize).unwrap().find_word.len() as i32 {
+    if rule_index < 0 || rule_index >= proj_state.rules.len() as i32 || word_index < 0 || word_index >= proj_state.rules.get(rule_index as usize).unwrap().search_terms.len() as i32 {
         return Ok(());
     }
-    let mut words = &mut proj_state.rules.get_mut(rule_index as usize).unwrap().find_word;
+    if proj_state.active_rule != Some(rule_index) {
+        proj_state.active_rule = Some(rule_index);
+    }
+    let mut words = &mut proj_state.rules.get_mut(rule_index as usize).unwrap().search_terms;
     words[word_index as usize] = new_word;
     let _ = app.emit("sync_app_state", proj_state.clone());
     Ok(())
@@ -393,49 +423,150 @@ fn rename_find_phoneme(rule_index: i32, word_index: i32, new_word: String, app: 
 #[tauri::command]
 fn select_find_phoneme(rule_index: i32, word_index: i32, app: tauri::AppHandle, state: State<'_, Mutex<AppProjectState>>) -> Result<(), String> {
     let mut proj_state = state.lock().unwrap();
-    if rule_index < 0 || rule_index >= proj_state.rules.len() as i32 || word_index < 0 || word_index >= proj_state.rules.get(rule_index as usize).unwrap().find_word.len() as i32 {
+    if rule_index < 0 || rule_index >= proj_state.rules.len() as i32 || word_index < 0 || word_index >= proj_state.rules.get(rule_index as usize).unwrap().search_terms.len() as i32 {
         proj_state.selected_word = None;
     } else {
-        proj_state.selected_word = Some(word_index);
         if proj_state.active_rule != Some(rule_index) {
             proj_state.active_rule = Some(rule_index);
         }
+        proj_state.selected_word = Some(word_index);
     }
     let _ = app.emit("sync_app_selection_state", (proj_state.active_rule, proj_state.selected_word, proj_state.selected_replacement));
     Ok(())
 }
 
 #[tauri::command]
-fn select_replacement_in_rule(rule_index: i32, replacement_index: i32, app: tauri::AppHandle, state: State<'_, Mutex<AppProjectState>>) -> Result<(), String> {
-    let mut proj_state = state.lock().unwrap();
-    if rule_index < 0 || rule_index >= proj_state.rules.len() as i32 || replacement_index < 0 || replacement_index >= proj_state.rules.get(rule_index as usize).unwrap().replace_options.len() as i32 {
-        proj_state.selected_replacement = None;
-    } else {
-        proj_state.selected_replacement = Some(replacement_index);
-    }
-    let _ = app.emit("sync_app_state", proj_state.clone());
-    Ok(())
-}
-
-#[tauri::command]
-fn add_replacement_to_rule(rule_index: i32, replacement: String, app: tauri::AppHandle, state: State<'_, Mutex<AppProjectState>>) -> Result<(), String> {
+fn add_replacement(rule_index: i32, replacement: String, app: tauri::AppHandle, state: State<'_, Mutex<AppProjectState>>) -> Result<(), String> {
     let mut proj_state = state.lock().unwrap();
     if rule_index < 0 || rule_index >= proj_state.rules.len() as i32 {
         return Ok(());
     }
-    proj_state.rules.get_mut(rule_index as usize).unwrap().replace_options.push(replacement);
+    if proj_state.active_rule != Some(rule_index) {
+        proj_state.active_rule = Some(rule_index);
+    }
+    let mut replace_options = &mut proj_state.rules.get_mut(rule_index as usize).unwrap().replace_options;
+    if replace_options.iter().any(|w| w == &replacement) {
+        proj_state.selected_replacement = Some(replace_options.iter().position(|w| w == &replacement).unwrap() as i32);
+        let _ = app.emit("sync_app_selection_state", (proj_state.active_rule, proj_state.selected_word, proj_state.selected_replacement));
+        return Ok(());
+    }
+    replace_options.push(replacement);
     let _ = app.emit("sync_app_state", proj_state.clone());
     Ok(())
 }
 
 #[tauri::command]
-fn remove_replacement_from_rule(rule_index: i32, replacement_index: i32, app: tauri::AppHandle, state: State<'_, Mutex<AppProjectState>>) -> Result<(), String> {
+fn remove_replacement(rule_index: i32, replacement_index: i32, app: tauri::AppHandle, state: State<'_, Mutex<AppProjectState>>) -> Result<(), String> {
     let mut proj_state = state.lock().unwrap();
     if rule_index < 0 || rule_index >= proj_state.rules.len() as i32 || replacement_index < 0 || replacement_index >= proj_state.rules.get(rule_index as usize).unwrap().replace_options.len() as i32 {
         return Ok(());
     }
-    proj_state.rules.get_mut(rule_index as usize).unwrap().replace_options.remove(replacement_index as usize);
+    if proj_state.active_rule != Some(rule_index) {
+        proj_state.active_rule = Some(rule_index);
+    }
+    if proj_state.selected_replacement == Some(replacement_index) {
+        let mut replace_options = &mut proj_state.rules.get_mut(rule_index as usize).unwrap().replace_options;
+        replace_options.remove(replacement_index as usize);
+        if replacement_index >= replace_options.len() as i32 {
+            proj_state.selected_replacement = if replace_options.is_empty() { None } else { Some(replace_options.len() as i32 - 1) };
+        }
+    }
     let _ = app.emit("sync_app_state", proj_state.clone());
+    Ok(())
+}
+
+#[tauri::command]
+fn rename_replacement(rule_index: i32, replacement_index: i32, new_replacement: String, app: tauri::AppHandle, state: State<'_, Mutex<AppProjectState>>) -> Result<(), String> {
+    let mut proj_state = state.lock().unwrap();
+    if rule_index < 0 || rule_index >= proj_state.rules.len() as i32 || replacement_index < 0 || replacement_index >= proj_state.rules.get(rule_index as usize).unwrap().replace_options.len() as i32 {
+        return Ok(());
+    }
+    if proj_state.active_rule != Some(rule_index) {
+        proj_state.active_rule = Some(rule_index);
+    }
+    let mut replace_options = &mut proj_state.rules.get_mut(rule_index as usize).unwrap().replace_options;
+    replace_options[replacement_index as usize] = new_replacement;
+    let _ = app.emit("sync_app_state", proj_state.clone());
+    Ok(())
+}
+
+#[tauri::command]
+fn select_replacement(rule_index: i32, replacement_index: i32, app: tauri::AppHandle, state: State<'_, Mutex<AppProjectState>>) -> Result<(), String> {
+    let mut proj_state = state.lock().unwrap();
+    if rule_index < 0 || rule_index >= proj_state.rules.len() as i32 || replacement_index < 0 || replacement_index >= proj_state.rules.get(rule_index as usize).unwrap().replace_options.len() as i32 {
+        proj_state.selected_replacement = None;
+    } else {
+        if proj_state.active_rule != Some(rule_index) {
+            proj_state.active_rule = Some(rule_index);
+        }
+        proj_state.selected_replacement = Some(replacement_index);
+    }
+    let _ = app.emit("sync_app_selection_state", (proj_state.active_rule, proj_state.selected_word, proj_state.selected_replacement));
+    Ok(())
+}
+
+fn selection_changed(item_index: i32, found_index: i32) {}
+
+#[tauri::command]
+fn select_item(item_index: i32, app: tauri::AppHandle, state: State<'_, Mutex<ItemSelectionState>>, session: State<'_, Mutex<SessionItems>>) -> Result<(), String> {
+    let mut selection_state = state.lock().unwrap();
+    let session_items = session.lock().unwrap();
+    if item_index < 0 || item_index >= session_items.items.len() as i32 {
+        selection_state.selected_item = None;
+    } else {
+        selection_state.selected_item = Some(item_index);
+    }
+    let _ = app.emit("sync_item_selection_state", selection_state.clone());
+    Ok(())
+}
+
+#[tauri::command]
+fn select_found_tier(item_index: i32, found_index: i32, app: tauri::AppHandle, state: State<'_, Mutex<ItemSelectionState>>, session: State<'_, Mutex<SessionItems>>) -> Result<(), String> {
+    let mut selection_state = state.lock().unwrap();
+    let session_items = session.lock().unwrap();
+    if item_index < 0 || item_index >= session_items.items.len() as i32 || found_index < 0 || found_index >= session_items.items[item_index as usize].found_tiers.len() as i32 {
+        selection_state.selected_found = None;
+    } else {
+        if selection_state.selected_item != Some(item_index) {
+            selection_state.selected_item = Some(item_index);
+        }
+        selection_state.selected_found = Some(found_index);
+    }
+    let _ = app.emit("sync_item_selection_state", selection_state.clone());
+    Ok(())
+}
+
+#[tauri::command]
+fn next_found(app: tauri::AppHandle, state: State<'_, Mutex<ItemSelectionState>>, session: State<'_, Mutex<SessionItems>>) -> Result<(), String> {
+    let mut selection_state = state.lock().unwrap();
+    let session_items = session.lock().unwrap();
+    if selection_state.selected_item == None || selection_state.selected_found == None {
+        return Ok(());
+    }
+    if selection_state.selected_found == Some(session_items.items[selection_state.selected_item.unwrap() as usize].found_tiers.len() as i32 - 1) && selection_state.selected_item < Some(session_items.items.len() as i32 - 1) {
+        selection_state.selected_item = Some(selection_state.selected_item.unwrap() + 1);
+        selection_state.selected_found = Some(0);
+    } else if selection_state.selected_found < Some(session_items.items[selection_state.selected_item.unwrap() as usize].found_tiers.len() as i32 - 1) {
+        selection_state.selected_found = Some(selection_state.selected_found.unwrap() + 1);
+    }
+    let _ = app.emit("sync_item_selection_state", selection_state.clone());
+    Ok(())
+}
+
+#[tauri::command]
+fn prev_found(app: tauri::AppHandle, state: State<'_, Mutex<ItemSelectionState>>, session: State<'_, Mutex<SessionItems>>) -> Result<(), String> {
+    let mut selection_state = state.lock().unwrap();
+    let session_items = session.lock().unwrap();
+    if selection_state.selected_item == None || selection_state.selected_found == None {
+        return Ok(());
+    }
+    if selection_state.selected_found == Some(0) && selection_state.selected_item > Some(0) {
+        selection_state.selected_item = Some(selection_state.selected_item.unwrap() - 1);
+        selection_state.selected_found = Some(session_items.items[selection_state.selected_item.unwrap() as usize].found_tiers.len() as i32 - 1);
+    } else if selection_state.selected_found > Some(0) {
+        selection_state.selected_found = Some(selection_state.selected_found.unwrap() - 1);
+    }
+    let _ = app.emit("sync_item_selection_state", selection_state.clone());
     Ok(())
 }
 
@@ -484,7 +615,7 @@ fn open_folder(target: &str, app_handle: tauri::AppHandle, state: State<'_, Mute
 }
 
 #[tauri::command]
-fn list_items(project_state: State<'_, Mutex<AppProjectState>>, session_state: State<'_, Mutex<SessionItems>>) -> Result<(), String> {
+fn list_items(app: tauri::AppHandle, project_state: State<'_, Mutex<AppProjectState>>, session_state: State<'_, Mutex<SessionItems>>) -> Result<(), String> {
     let mut proj_state = project_state.lock().unwrap();
     let mut sess_state = session_state.lock().unwrap();
     if proj_state.tg_folder == None {
@@ -494,7 +625,7 @@ fn list_items(project_state: State<'_, Mutex<AppProjectState>>, session_state: S
         // return Err("Active rule must be set correctly.".into());
         proj_state.rules.push(ReplaceRule {
             rule_name: "test".into(),
-            find_word: vec!["d".into()].into_iter().collect(),
+            search_terms: vec!["d".into()].into_iter().collect(),
             replace_options: vec!["dx_d".into(), "dx_t".into()],
         });
         proj_state.active_rule = Some(0);
@@ -513,7 +644,7 @@ fn list_items(project_state: State<'_, Mutex<AppProjectState>>, session_state: S
                             .and_then(|ext| ext.to_str())
                             .map(|ext| ext.to_lowercase()) == Some("textgrid".into()) {
                             let tg = parse_textgrid(path.clone())?;
-                            let found_tiers = check_rule(active_rule, &tg);
+                            let (found_tiers, found_tiers_title) = check_rule(active_rule, &tg);
                             if found_tiers.len() > 0 {
                                 let item_record = ItemRecord {
                                     tg_file: path.clone(),
@@ -526,6 +657,7 @@ fn list_items(project_state: State<'_, Mutex<AppProjectState>>, session_state: S
                                             )
                                     } else { None },
                                     found_tiers,
+                                    found_tiers_title,
                                 };
                                 sess_state.items.push(item_record);
                             }
@@ -534,6 +666,7 @@ fn list_items(project_state: State<'_, Mutex<AppProjectState>>, session_state: S
                     Err(_) => continue,
                 }
             }
+            let _ = app.emit("sync_session_state", sess_state.items.clone());
             Ok(())
         },
         Err(_) => Err("Failed to read the directory".into()),
@@ -579,8 +712,16 @@ pub fn run() {
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .manage(Mutex::new(AppProjectState::default()))
         .manage(Mutex::new(SessionItems::default()))
+        .manage(Mutex::new(ItemSelectionState::default()))
         .manage(Mutex::new(sink))
-        .invoke_handler(tauri::generate_handler![get_config_state, get_session_items, open_folder, list_items, play_test])
+        .invoke_handler(tauri::generate_handler![
+            get_config_state, get_session_items,
+            open_folder, list_items, play_test,
+            add_rule, rename_rule, remove_rule, select_rule,
+            add_find_phoneme, remove_find_phoneme, rename_find_phoneme, select_find_phoneme,
+            add_replacement, remove_replacement, rename_replacement, select_replacement,
+            prev_found, next_found, select_item, select_found_tier
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

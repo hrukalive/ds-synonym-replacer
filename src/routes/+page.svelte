@@ -23,23 +23,18 @@
 	let wav_folder_path = $state('No folder selected.');
 
 	listen('sync_folder_state', (event) => {
-		console.log(event);
-		if (event.payload !== null && event.payload !== undefined) {
-			if (event.payload.tg_folder !== null && event.payload.tg_folder !== undefined) {
-				tg_folder_path = event.payload.tg_folder;
-			} else {
-				tg_folder_path = 'No folder selected.';
-			}
-			if (event.payload.wav_folder !== null && event.payload.wav_folder !== undefined) {
-				wav_folder_path = event.payload.wav_folder;
-			} else {
-				wav_folder_path = 'No folder selected.';
-			}
+		if (Array.isArray(event.payload) && event.payload.length === 2) {
+			tg_folder_path = event.payload[0];
+			wav_folder_path = event.payload[1];
+		} else {
+			console.error('Invalid payload for sync_folder_state event');
 		}
 	});
 
-	let rules = writable([{ name: "aaa", searchTerms: [], replacements: [] }, { name: "bbb", searchTerms: [], replacements: [] }]);
+	let rules = writable([{ rule_name: "aaa", search_terms: [], replace_options: [] }, { rule_name: "bbb", search_terms: [], replace_options: [] }]);
 	let selectedRule = $state("");
+	let selectedTerm = $state("");
+	let selectedRepl = $state("");
 	let currentRuleName = $state("");
 	let currentTerm = $state("");
 	let currentReplPh = $state("");
@@ -53,9 +48,19 @@
     function handleRuleBlur(event) {
         if (event.type === 'blur' || (event.type === 'keydown' && event.key === 'Enter')) {
             editingRuleIndex.set(-1);
+			console.log(event.target.value.trim());
         }
 		return true;
     }
+
+	listen('sync_app_state', (event) => {
+		console.log(event.payload);
+		if (event.payload !== null && event.payload !== undefined) {
+			if (Array.isArray(event.payload.rules)) {
+				rules.update(_ => event.payload.rules)
+			}
+		}
+	})
 
     function addRule(name) {
 		name = name.trim();
@@ -63,12 +68,12 @@
 			return;
 		}
 		// find existing rule index
-		const existingRule = $rules.find(rule => rule.name === name);
+		const existingRule = $rules.find(rule => rule.rule_name === name);
 		if (existingRule) {
-			selectedRule = existingRule.name;
+			selectedRule = existingRule.rule_name;
 			return;
 		}
-        rules.update(rules => [...rules, { name, searchTerms: [], replacements: [] }]);
+        rules.update(rules => [...rules, { rule_name: name, search_terms: [], replace_options: [] }]);
     }
 
 	function removeRule(index) {
@@ -83,14 +88,14 @@
 		console.log(selectedRule);
 	}
 
-	function updateRuleName(index, event) {
+	function updateRule(evt, index) {
+		console.log(evt.target.value.trim())
         rules.update(rules => {
-            rules[index].name = event.target.value.trim();
+            rules[index].rule_name = evt.target.value.trim();
             return rules;
         });
 		selectRule = rules[index].name;
     }
-
 	function createAutoFocus(el) {
 		el.focus();
 		el.select();
@@ -240,7 +245,7 @@
 		</div>
 		<div class="flex w-full justify-center space-x-4">
 			<input bind:value={currentRuleName} type="text" placeholder="Rule name" class="input input-bordered flex-1" />
-			<button class="btn btn-primary flex-initial w-12" onclick={() => { addRule(currentRuleName); currentRuleName = ""; }}>Add</button>
+			<button class="btn btn-primary flex-initial w-12" onclick={() => { invoke('add_rule', { ruleName: currentRuleName }); currentRuleName = ""; }}>Add</button>
 			<input bind:value={currentTerm} type="text" placeholder="Find Phoneme" class="input input-bordered flex-1" />
 			<button class="btn btn-primary flex-initial w-12" onclick={() => { selectRule("aaa"); }}>Add</button>
 			<input bind:value={currentReplPh} type="text" placeholder="Replace Phoneme" class="input input-bordered flex-1" />
@@ -256,12 +261,12 @@
 					<div class="flex h-full pl-0">
 						<div class="flex-1 transition-all" tabindex="-1" role="button" ondblclick={() => handleRuleDoubleClick(ruleIndex)}>
 						{#if $editingRuleIndex === ruleIndex}
-							<input type="text" id={"ruleIdx"+ruleIndex} bind:value={rule.name} onkeydown={(e) => handleRuleBlur(e)} onblur={(e) => handleRuleBlur(e)} oninput={(e) => updateRuleName(ruleIndex, e)} use:createAutoFocus class="input input-sm w-full transition-all" />
+							<input type="text" id={"ruleIdx"+ruleIndex} bind:value={rule.rule_name} onkeydown={(e) => handleRuleBlur(e)} onblur={(e) => handleRuleBlur(e)} use:createAutoFocus class="input input-sm w-full transition-all" />
 						{:else}
-							<input type="radio" name="rule-selection" class="btn btn-sm btn-block btn-ghost justify-start transition-all" bind:group="{selectedRule}" aria-label={rule.name} value={rule.name}  onclick={() => selectRule(rule.name)}/>
+							<input type="radio" name="rule-selection" class="btn btn-sm btn-block btn-ghost justify-start transition-all" bind:group="{selectedRule}" aria-label={rule.rule_name} value={rule.rule_name}  onclick={() => selectRule(rule.rule_name)}/>
 						{/if}
 						</div>
-						<button class="hidden group-hover:inline-flex btn btn-ghost btn-circle btn-xs self-center" onclick={(e) => { e.preventDefault(); removeRule(ruleIndex) }}>✕</button>
+						<button class="hidden group-hover:inline-flex btn btn-ghost btn-circle btn-xs self-center" onclick={(e) => { removeRule(e, ruleIndex) }}>✕</button>
 					</div>
 				</li>
 			{/each}
