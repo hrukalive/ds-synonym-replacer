@@ -301,6 +301,7 @@ fn add_rule(rule_name: String, app: tauri::AppHandle, state: State<'_, Mutex<App
             proj_state.active_rule = Some(selected_rule as i32);
             proj_state.selected_word = None;
             proj_state.selected_replacement = None;
+            let _ = app.emit("sync_app_selection_state", (proj_state.active_rule, proj_state.selected_word, proj_state.selected_replacement));
         }
     } else {
         proj_state.rules.push(ReplaceRule {
@@ -311,8 +312,8 @@ fn add_rule(rule_name: String, app: tauri::AppHandle, state: State<'_, Mutex<App
         proj_state.active_rule = Some((proj_state.rules.len() - 1) as i32);
         proj_state.selected_word = None;
         proj_state.selected_replacement = None;
+        let _ = app.emit("sync_app_state", proj_state.clone());
     }
-    let _ = app.emit("sync_app_state", proj_state.clone());
     Ok(())
 }
 
@@ -400,8 +401,10 @@ fn remove_find_phoneme(rule_index: i32, word_index: i32, app: tauri::AppHandle, 
         if word_index >= words.len() as i32 {
             proj_state.selected_word = if words.is_empty() { None } else { Some(words.len() as i32 - 1) };
         }
+        let _ = app.emit("sync_app_state", proj_state.clone());
+    } else {
+        let _ = app.emit("sync_app_selection_state", (proj_state.active_rule, proj_state.selected_word, proj_state.selected_replacement));
     }
-    let _ = app.emit("sync_app_state", proj_state.clone());
     Ok(())
 }
 
@@ -448,10 +451,10 @@ fn add_replacement(rule_index: i32, replacement: String, app: tauri::AppHandle, 
     if replace_options.iter().any(|w| w == &replacement) {
         proj_state.selected_replacement = Some(replace_options.iter().position(|w| w == &replacement).unwrap() as i32);
         let _ = app.emit("sync_app_selection_state", (proj_state.active_rule, proj_state.selected_word, proj_state.selected_replacement));
-        return Ok(());
+    } else {
+        replace_options.push(replacement);
+        let _ = app.emit("sync_app_state", proj_state.clone());
     }
-    replace_options.push(replacement);
-    let _ = app.emit("sync_app_state", proj_state.clone());
     Ok(())
 }
 
@@ -470,8 +473,10 @@ fn remove_replacement(rule_index: i32, replacement_index: i32, app: tauri::AppHa
         if replacement_index >= replace_options.len() as i32 {
             proj_state.selected_replacement = if replace_options.is_empty() { None } else { Some(replace_options.len() as i32 - 1) };
         }
+        let _ = app.emit("sync_app_state", proj_state.clone());
+    } else {
+        let _ = app.emit("sync_app_selection_state", (proj_state.active_rule, proj_state.selected_word, proj_state.selected_replacement));
     }
-    let _ = app.emit("sync_app_state", proj_state.clone());
     Ok(())
 }
 

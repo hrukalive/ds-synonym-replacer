@@ -3,6 +3,7 @@
     import { listen } from '@tauri-apps/api/event'
 	import ThemeSelect from '$lib/theme-select.svelte';
 	import { writable } from 'svelte/store';
+	import { onMount } from 'svelte';
 
 	let isDropdownOpen = $state(false);
 	const handleDropdownClick = () => {
@@ -32,26 +33,38 @@
 	});
 
 	let rules = writable([{ rule_name: "aaa", search_terms: [], replace_options: [] }, { rule_name: "bbb", search_terms: [], replace_options: [] }]);
-	let selectedRule = $state("");
-	let selectedTerm = $state("");
-	let selectedRepl = $state("");
+	let selectedRule = $state(-1);
+	let selectedTerm = $state(-1);
+	let selectedRepl = $state(-1);
 	let currentRuleName = $state("");
 	let currentTerm = $state("");
 	let currentReplPh = $state("");
 
     let editingRuleIndex = writable(-1);
-
     function handleRuleDoubleClick(index) {
         editingRuleIndex.set(index);
     }
-
     function handleRuleBlur(event) {
         if (event.type === 'blur' || (event.type === 'keydown' && event.key === 'Enter')) {
-            editingRuleIndex.set(-1);
 			console.log(event.target.value.trim());
+			invoke('rename_rule', { ruleIndex: $editingRuleIndex, ruleName: event.target.value.trim() });
+            editingRuleIndex.set(-1);
         }
 		return true;
     }
+
+	let editingTermIndex = writable(-1);
+	function handleTermDoubleClick(index) {
+		editingTermIndex.set(index);
+	}
+	function handleTermBlur(event) {
+		if (event.type === 'blur' || (event.type === 'keydown' && event.key === 'Enter')) {
+			console.log(event.target.value.trim());
+			invoke('rename_find_phoneme', { ruleIndex: $selectedRule, wordIndex: $editingTermIndex, newWord: event.target.value.trim() });
+			editingTermIndex.set(-1);
+		}
+		return true;
+	}
 
 	listen('sync_app_state', (event) => {
 		console.log(event.payload);
@@ -59,75 +72,33 @@
 			if (Array.isArray(event.payload.rules)) {
 				rules.update(_ => event.payload.rules)
 			}
+			selectedRule = event.payload.active_rule !== null ? event.payload.active_rule : -1;
+			selectedTerm = event.payload.selected_word !== null ? event.payload.selected_word : -1;
+			selectedRepl = event.payload.selected_replacement !== null ? event.payload.selected_replacement : -1;
 		}
 	})
 
-    function addRule(name) {
-		name = name.trim();
-		if (name === "") {
-			return;
+	listen('sync_app_selection_state', (event) => {
+		console.log(event.payload);
+		if (event.payload !== null && event.payload !== undefined) {
+			selectedRule = event.payload[0] !== null ? event.payload[0] : -1;
+			selectedTerm = event.payload[1] !== null ? event.payload[1] : -1;
+			selectedRepl = event.payload[2] !== null ? event.payload[2] : -1;
 		}
-		// find existing rule index
-		const existingRule = $rules.find(rule => rule.rule_name === name);
-		if (existingRule) {
-			selectedRule = existingRule.rule_name;
-			return;
-		}
-        rules.update(rules => [...rules, { rule_name: name, search_terms: [], replace_options: [] }]);
-    }
+	})
 
-	function removeRule(index) {
-		rules.update(rules => {
-			rules.splice(index, 1);
-			return rules;
-		});
-	}
-
-	function selectRule(ruleName) {
-		selectedRule = ruleName;
-		console.log(selectedRule);
-	}
-
-	function updateRule(evt, index) {
-		console.log(evt.target.value.trim())
-        rules.update(rules => {
-            rules[index].rule_name = evt.target.value.trim();
-            return rules;
-        });
-		selectRule = rules[index].name;
-    }
 	function createAutoFocus(el) {
 		el.focus();
 		el.select();
 	}
 
-    // function addSearchTerm(ruleIndex, ph) {
-    //     rules.update(rules => {
-    //         rules[ruleIndex].searchTerms.push(ph);
-    //         return rules;
-    //     });
-    // }
-
-    // function addReplacement(ruleIndex, ph) {
-    //     rules.update(rules => {
-    //         rules[ruleIndex].replacements.push(ph);
-    //         return rules;
-    //     });
-    // }
-
-    // function updateItem(ruleIndex, list, itemIndex, value) {
-    //     rules.update(rules => {
-    //         rules[ruleIndex][list][itemIndex] = value;
-    //         return rules;
-    //     });
-    // }
-
-    // function deleteItem(ruleIndex, list, itemIndex) {
-    //     rules.update(rules => {
-    //         rules[ruleIndex][list].splice(itemIndex, 1);
-    //         return rules;
-    //     });
-    // }
+	onMount(async () => {
+		let payload = await invoke('get_config_state');
+		rules.update(_ => payload.rules)
+		selectedRule = payload.active_rule !== null ? payload.active_rule : -1;
+		selectedTerm = payload.selected_word !== null ? payload.selected_word : -1;
+		selectedRepl = payload.selected_replacement !== null ? payload.selected_replacement : -1;
+	});
 </script>
 
 <svelte:head>
@@ -261,15 +232,36 @@
 					<div class="flex h-full pl-0">
 						<div class="flex-1 transition-all" tabindex="-1" role="button" ondblclick={() => handleRuleDoubleClick(ruleIndex)}>
 						{#if $editingRuleIndex === ruleIndex}
-							<input type="text" id={"ruleIdx"+ruleIndex} bind:value={rule.rule_name} onkeydown={(e) => handleRuleBlur(e)} onblur={(e) => handleRuleBlur(e)} use:createAutoFocus class="input input-sm w-full transition-all" />
+							<input type="text" id={"ruleIdx"+ruleIndex} value={rule.rule_name} onkeydown={(e) => handleRuleBlur(e)} onblur={(e) => handleRuleBlur(e)} use:createAutoFocus class="input input-sm w-full transition-all" />
 						{:else}
-							<input type="radio" name="rule-selection" class="btn btn-sm btn-block btn-ghost justify-start transition-all" bind:group="{selectedRule}" aria-label={rule.rule_name} value={rule.rule_name}  onclick={() => selectRule(rule.rule_name)}/>
+							<input type="radio" name="rule-selection" class="btn btn-sm btn-block btn-ghost justify-start transition-all" bind:group="{selectedRule}" aria-label={rule.rule_name} value={ruleIndex}  onclick={() => invoke('select_rule', { ruleIndex })}/>
 						{/if}
 						</div>
-						<button class="hidden group-hover:inline-flex btn btn-ghost btn-circle btn-xs self-center" onclick={(e) => { removeRule(e, ruleIndex) }}>✕</button>
+						<button class="hidden group-hover:inline-flex btn btn-ghost btn-circle btn-xs self-center" onclick={(e) => { invoke('remove_rule', { ruleIndex }) }}>✕</button>
 					</div>
 				</li>
 			{/each}
+			</ul>
+			<ul
+				tabindex="-1"
+				class="shadow bg-base-200 rounded-box min-h-12 flex-1 px-2 py-2"
+			>
+			{#if $selectedRule > -1}
+			{#each $rules[selectedRule].search_terms as term, termIndex}
+				<li class="group h-8">
+					<div class="flex h-full pl-0">
+						<div class="flex-1 transition-all" tabindex="-1" role="button" ondblclick={() => handleTermDoubleClick(termIndex)}>
+						{#if $editingTermIndex === termIndex}
+							<input type="text" id={"termIdx"+termIndex} value={term} onkeydown={(e) => handleTermBlur(e)} onblur={(e) => handleTermBlur(e)} use:createAutoFocus class="input input-sm w-full transition-all" />
+						{:else}
+							<input type="radio" name="term-selection" class="btn btn-sm btn-block btn-ghost justify-start transition-all" bind:group="{selectedRule}" aria-label={rule.rule_name} value={ruleIndex}  onclick={() => invoke('select_find_phoneme', { ruleIndex: selectedRule, wordIndex: termIndex })}/>
+						{/if}
+						</div>
+						<button class="hidden group-hover:inline-flex btn btn-ghost btn-circle btn-xs self-center" onclick={(e) => { invoke('remove_rule', { ruleIndex }) }}>✕</button>
+					</div>
+				</li>
+			{/each}
+			{/if}
 			</ul>
 			<!-- <ul
 				tabindex="-1"
