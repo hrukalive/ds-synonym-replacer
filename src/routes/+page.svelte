@@ -32,13 +32,16 @@
 		}
 	});
 
-	let rules = writable([{ rule_name: "aaa", search_terms: [], replace_options: [] }, { rule_name: "bbb", search_terms: [], replace_options: [] }]);
-	let selectedRule = $state(-1);
-	let selectedTerm = $state(-1);
-	let selectedRepl = $state(-1);
+	let rules = writable([]);
+	let items = writable([]);
+	let selectedRuleIdx = $state(-1);
+	let selectedTermIdx = $state(-1);
+	let selectedOptIdx = $state(-1);
+	let selectedItemIdx = $state(-1);
+	let selectedMarkIdx = $state(-1);
 	let currentRuleName = $state("");
 	let currentTerm = $state("");
-	let currentReplPh = $state("");
+	let currentOpt = $state("");
 
     let editingRuleIndex = writable(-1);
     function handleRuleDoubleClick(index) {
@@ -46,8 +49,10 @@
     }
     function handleRuleBlur(event) {
         if (event.type === 'blur' || (event.type === 'keydown' && event.key === 'Enter')) {
-			console.log(event.target.value.trim());
-			invoke('rename_rule', { ruleIndex: $editingRuleIndex, ruleName: event.target.value.trim() });
+			if (event.target.value.trim().length > 0) {
+				console.log(event.target.value.trim());
+				invoke('rename_rule', { ruleIndex: $editingRuleIndex, newName: event.target.value.trim() });
+			}
             editingRuleIndex.set(-1);
         }
 		return true;
@@ -59,9 +64,26 @@
 	}
 	function handleTermBlur(event) {
 		if (event.type === 'blur' || (event.type === 'keydown' && event.key === 'Enter')) {
-			console.log(event.target.value.trim());
-			invoke('rename_find_phoneme', { ruleIndex: $selectedRule, wordIndex: $editingTermIndex, newWord: event.target.value.trim() });
+			if (event.target.value.trim().length > 0) {
+				console.log(event.target.value.trim());
+				invoke('rename_search_term', { termIndex: $editingTermIndex, newTerm: event.target.value.trim() });
+			}
 			editingTermIndex.set(-1);
+		}
+		return true;
+	}
+
+	let editingOptIndex = writable(-1);
+	function handleOptDoubleClick(index) {
+		editingOptIndex.set(index);
+	}
+	function handleOptBlur(event) {
+		if (event.type === 'blur' || (event.type === 'keydown' && event.key === 'Enter')) {
+			if (event.target.value.trim().length > 0) {
+				console.log(event.target.value.trim());
+				invoke('rename_replace_option', { optIndex: $editingOptIndex, newOpt: event.target.value.trim() });
+			}
+			editingOptIndex.set(-1);
 		}
 		return true;
 	}
@@ -72,18 +94,52 @@
 			if (Array.isArray(event.payload.rules)) {
 				rules.update(_ => event.payload.rules)
 			}
-			selectedRule = event.payload.active_rule !== null ? event.payload.active_rule : -1;
-			selectedTerm = event.payload.selected_word !== null ? event.payload.selected_word : -1;
-			selectedRepl = event.payload.selected_replacement !== null ? event.payload.selected_replacement : -1;
+			tg_folder_path = event.payload.tg_folder !== null ? event.payload.tg_folder : "No Folder Selected.";
+			wav_folder_path = event.payload.wav_folder !== null ? event.payload.wav_folder : "No Folder Selected.";
+			selectedRuleIdx = event.payload.selected_rule_idx !== null ? event.payload.selected_rule_idx : -1;
+			selectedTermIdx = event.payload.selected_term_idx !== null ? event.payload.selected_term_idx : -1;
+			selectedOptIdx = event.payload.selected_opt_idx !== null ? event.payload.selected_opt_idx : -1;
+		}
+	})
+
+	listen('sync_session_state', (event) => {
+		console.log(event.payload);
+		if (event.payload !== null && event.payload !== undefined) {
+			items.update(_ => event.payload.items)
+			selectedItemIdx = event.payload.selected_item !== null ? event.payload.selected_item : -1;
+			if (event.payload.selected_mark !== null) {
+				selectedMarkIdx = event.payload.selected_mark[selectedItemIdx] !== null ? event.payload.selected_mark[selectedItemIdx] : -1;
+			}
 		}
 	})
 
 	listen('sync_app_selection_state', (event) => {
 		console.log(event.payload);
 		if (event.payload !== null && event.payload !== undefined) {
-			selectedRule = event.payload[0] !== null ? event.payload[0] : -1;
-			selectedTerm = event.payload[1] !== null ? event.payload[1] : -1;
-			selectedRepl = event.payload[2] !== null ? event.payload[2] : -1;
+			selectedRuleIdx = event.payload[0] !== null ? event.payload[0] : -1;
+			selectedTermIdx = event.payload[1] !== null ? event.payload[1] : -1;
+			selectedOptIdx = event.payload[2] !== null ? event.payload[2] : -1;
+		}
+	})
+
+	listen('sync_item_selection_state', (event) => {
+		console.log(event.payload);
+		if (event.payload !== null && event.payload !== undefined) {
+			selectedItemIdx = event.payload[0] !== null ? event.payload[0] : -1;
+			selectedMarkIdx = event.payload[1] !== null ? event.payload[1] : -1;
+		}
+	})
+
+	listen('sync_item_selected_options', (event) => {
+		console.log(event.payload);
+		if (event.payload !== null && event.payload !== undefined) {
+			selectedItemIdx = event.payload[0] !== null ? event.payload[0] : -1;
+			selectedMarkIdx = event.payload[1] !== null ? event.payload[1] : -1;
+			items.update(items => {
+				items[selectedRuleIdx].selected_options[selectedMarkIdx] = event.payload[2];
+				items[selectedRuleIdx].dirty = true;
+				return items
+			})
 		}
 	})
 
@@ -95,9 +151,18 @@
 	onMount(async () => {
 		let payload = await invoke('get_config_state');
 		rules.update(_ => payload.rules)
-		selectedRule = payload.active_rule !== null ? payload.active_rule : -1;
-		selectedTerm = payload.selected_word !== null ? payload.selected_word : -1;
-		selectedRepl = payload.selected_replacement !== null ? payload.selected_replacement : -1;
+		tg_folder_path = payload.tg_folder !== null ? payload.tg_folder : "No Folder Selected.";
+		wav_folder_path = payload.wav_folder !== null ? payload.wav_folder : "No Folder Selected.";
+		selectedRuleIdx = payload.selected_rule_idx !== null ? payload.selected_rule_idx : -1;
+		selectedTermIdx = payload.selected_term_idx !== null ? payload.selected_term_idx : -1;
+		selectedOptIdx = payload.selected_opt_idx !== null ? payload.selected_opt_idx : -1;
+
+		let payload2 = await invoke('get_session_items');
+		items.update(_ => payload2.items);
+		selectedItemIdx = payload2.selected_item !== null ? payload2.selected_item : -1;
+		if (payload2.selected_mark !== null) {
+			selectedMarkIdx = payload2.selected_mark[selectedItemIdx] !== null ? payload2.selected_mark[selectedItemIdx] : -1;
+		}
 	});
 </script>
 
@@ -106,7 +171,7 @@
 	<meta name="description" content="Svelte demo app" />
 </svelte:head>
 
-<section>
+<section class="h-screen">
 	<dialog id="setting_modal" class="modal modal-bottom sm:modal-middle">
 		<div class="modal-box">
 			<!-- <form method="dialog">
@@ -129,192 +194,209 @@
 			</div>
 		</div>
 	</dialog>
-	<div class="navbar bg-base-200">
-		<div class="navbar-start">
-			<div class="dropdown" onfocusout={handleDropdownFocusLoss}>
-				<div
-					tabindex="0"
-					role="button"
-					class="btn btn-ghost btn-circle"
-					onclick={handleDropdownClick}
-                    onkeydown={handleKeyDown}
-				>
-					{#if isDropdownOpen}
-						<svg
-							xmlns="http://www.w3.org/2000/svg"
-							fill="none"
-							viewBox="0 0 24 24"
-							class="inline-block h-6 w-6 stroke-current"
+	<div class="flex flex-col h-full">
+		<div>
+			<div class="navbar bg-base-200">
+				<div class="navbar-start">
+					<div class="dropdown" onfocusout={handleDropdownFocusLoss}>
+						<div
+							tabindex="0"
+							role="button"
+							class="btn btn-ghost btn-circle"
+							onclick={handleDropdownClick}
+							onkeydown={handleKeyDown}
 						>
-							<title>Close Dropdown</title>
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								stroke-width="2"
-								d="M6 18L18 6M6 6l12 12"
-							/>
-						</svg>
-					{:else}
-						<svg
-							xmlns="http://www.w3.org/2000/svg"
-							fill="none"
-							viewBox="0 0 24 24"
-							class="inline-block h-6 w-6 stroke-current"
+							{#if isDropdownOpen}
+								<svg
+									xmlns="http://www.w3.org/2000/svg"
+									fill="none"
+									viewBox="0 0 24 24"
+									class="inline-block h-6 w-6 stroke-current"
+								>
+									<title>Close Dropdown</title>
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width="2"
+										d="M6 18L18 6M6 6l12 12"
+									/>
+								</svg>
+							{:else}
+								<svg
+									xmlns="http://www.w3.org/2000/svg"
+									fill="none"
+									viewBox="0 0 24 24"
+									class="inline-block h-6 w-6 stroke-current"
+								>
+									<title>Open Dropdown</title>
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width="2"
+										d="M4 6h16M4 12h16M4 18h16"
+									/>
+								</svg>
+							{/if}
+						</div>
+						<ul
+							tabindex="-1"
+							class="menu menu-sm dropdown-content mt-3 z-[1] p-2 shadow bg-base-300 rounded-box w-52 transition-opacity"
+							style:visibility={isDropdownOpen ? 'visible' : 'hidden'}
 						>
-							<title>Open Dropdown</title>
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								stroke-width="2"
-								d="M4 6h16M4 12h16M4 18h16"
-							/>
-						</svg>
-					{/if}
+							<li><a onclick={() => invoke('load_state')}>Open project</a></li>
+							<li><a onclick={() => invoke('save_state')}>Save project</a></li>
+						</ul>
+					</div>
 				</div>
-				<ul
-					tabindex="-1"
-					class="menu menu-sm dropdown-content mt-3 z-[1] p-2 shadow bg-base-300 rounded-box w-52 transition-opacity"
-                    style:visibility={isDropdownOpen ? 'visible' : 'hidden'}
-				>
-					<li><a>Open project</a></li>
-					<li><a>Save project</a></li>
-				</ul>
+				<div class="navbar-center">
+					<a class="btn btn-ghost text-xl">Label Replacer</a>
+				</div>
+				<div class="navbar-end">
+					<button class="btn btn-square btn-ghost" onclick={() => setting_modal.showModal()}>
+						<svg
+							xmlns="http://www.w3.org/2000/svg"
+							fill="none"
+							viewBox="0 0 24 24"
+							class="inline-block w-5 h-5 stroke-current"
+							><path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width="2"
+								d="M5 12h.01M12 12h.01M19 12h.01M6 12a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0z"
+							></path></svg
+						>
+					</button>
+				</div>
 			</div>
 		</div>
-		<div class="navbar-center">
-			<a class="btn btn-ghost text-xl">Label Replacer</a>
-		</div>
-		<div class="navbar-end">
-			<button class="btn btn-square btn-ghost" onclick={() => setting_modal.showModal()}>
-				<svg
-					xmlns="http://www.w3.org/2000/svg"
-					fill="none"
-					viewBox="0 0 24 24"
-					class="inline-block w-5 h-5 stroke-current"
-					><path
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						stroke-width="2"
-						d="M5 12h.01M12 12h.01M19 12h.01M6 12a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0z"
-					></path></svg
-				>
-			</button>
-		</div>
-	</div>
-	<div class="mx-auto pt-4 space-y-2 px-4">
-		<div class="flex w-full justify-center">
-			<button class="btn btn-primary flex-initial w-48" onclick={() => invoke('open_folder', { target: 'tg' })}>Open TextGrid Folder</button>
-			<span id="tg-folder-text" class="font-normal h-8 m-2 mx-2 px-2 leading-7 border-b-2 flex-1"
-				>{ tg_folder_path }</span
-			>
-		</div>
-		<div class="flex w-full justify-center">
-			<button class="btn btn-primary flex-initial w-48" onclick={() => invoke('open_folder', { target: 'wav' })}>Open WAV Folder</button>
-			<span id="wav-folder-text" class="font-normal h-8 m-2 mx-2 px-2 leading-7 border-b-2 flex-1"
-				>{ wav_folder_path }</span
-			>
-		</div>
-		<div class="flex w-full justify-center space-x-4">
-			<input bind:value={currentRuleName} type="text" placeholder="Rule name" class="input input-bordered flex-1" />
-			<button class="btn btn-primary flex-initial w-12" onclick={() => { invoke('add_rule', { ruleName: currentRuleName }); currentRuleName = ""; }}>Add</button>
-			<input bind:value={currentTerm} type="text" placeholder="Find Phoneme" class="input input-bordered flex-1" />
-			<button class="btn btn-primary flex-initial w-12" onclick={() => { selectRule("aaa"); }}>Add</button>
-			<input bind:value={currentReplPh} type="text" placeholder="Replace Phoneme" class="input input-bordered flex-1" />
-			<button class="btn btn-primary flex-initial w-12" onclick={() => {}}>Add</button>
-		</div>
-		<div class="flex w-full justify-center space-x-4">
-			<ul
-				tabindex="-1"
-				class="shadow bg-base-200 rounded-box min-h-12 flex-1 px-2 py-2"
-			>
-			{#each $rules as rule, ruleIndex}
-				<li class="group h-8">
-					<div class="flex h-full pl-0">
-						<div class="flex-1 transition-all" tabindex="-1" role="button" ondblclick={() => handleRuleDoubleClick(ruleIndex)}>
-						{#if $editingRuleIndex === ruleIndex}
-							<input type="text" id={"ruleIdx"+ruleIndex} value={rule.rule_name} onkeydown={(e) => handleRuleBlur(e)} onblur={(e) => handleRuleBlur(e)} use:createAutoFocus class="input input-sm w-full transition-all" />
-						{:else}
-							<input type="radio" name="rule-selection" class="btn btn-sm btn-block btn-ghost justify-start transition-all" bind:group="{selectedRule}" aria-label={rule.rule_name} value={ruleIndex}  onclick={() => invoke('select_rule', { ruleIndex })}/>
-						{/if}
-						</div>
-						<button class="hidden group-hover:inline-flex btn btn-ghost btn-circle btn-xs self-center" onclick={(e) => { invoke('remove_rule', { ruleIndex }) }}>✕</button>
-					</div>
-				</li>
-			{/each}
-			</ul>
-			<ul
-				tabindex="-1"
-				class="shadow bg-base-200 rounded-box min-h-12 flex-1 px-2 py-2"
-			>
-			{#if $selectedRule > -1}
-			{#each $rules[selectedRule].search_terms as term, termIndex}
-				<li class="group h-8">
-					<div class="flex h-full pl-0">
-						<div class="flex-1 transition-all" tabindex="-1" role="button" ondblclick={() => handleTermDoubleClick(termIndex)}>
-						{#if $editingTermIndex === termIndex}
-							<input type="text" id={"termIdx"+termIndex} value={term} onkeydown={(e) => handleTermBlur(e)} onblur={(e) => handleTermBlur(e)} use:createAutoFocus class="input input-sm w-full transition-all" />
-						{:else}
-							<input type="radio" name="term-selection" class="btn btn-sm btn-block btn-ghost justify-start transition-all" bind:group="{selectedRule}" aria-label={rule.rule_name} value={ruleIndex}  onclick={() => invoke('select_find_phoneme', { ruleIndex: selectedRule, wordIndex: termIndex })}/>
-						{/if}
-						</div>
-						<button class="hidden group-hover:inline-flex btn btn-ghost btn-circle btn-xs self-center" onclick={(e) => { invoke('remove_rule', { ruleIndex }) }}>✕</button>
-					</div>
-				</li>
-			{/each}
-			{/if}
-			</ul>
-			<!-- <ul
-				tabindex="-1"
-				class="menu menu-sm dropdown-content shadow bg-base-200 rounded-box min-h-12 flex-1"
-			>
-				<li><a>Placeholder</a></li>
-				<li><a>Placeholder</a></li>
-			</ul>
-			<ul
-				tabindex="-1"
-				class="menu menu-sm dropdown-content shadow bg-base-200 rounded-box min-h-12 flex-1"
-			>
-				<li><a>Placeholder</a></li>
-				<li><a>Placeholder</a></li>
-			</ul> -->
-			<!-- <div class="flex w-full justify-center space-x-4">
-				<button class="btn btn-primary" onclick={addRule}>Add Rule</button>
-			</div> -->
-			<!-- {#each $rules as rule, ruleIndex}
-				<div class="flex w-full justify-center space-x-4 mt-4">
-					<input type="text" placeholder="Rule name" bind:value={rule.name} class="input input-bordered flex-1" />
-					<button class="btn btn-primary" onclick={() => addSearchTerm(ruleIndex)}>Add Search Term</button>
-					<button class="btn btn-primary" onclick={() => addReplacement(ruleIndex)}>Add Replacement</button>
+		<div class="flex-grow p-4">
+			<div class="flex flex-col space-y-2 h-full">
+				<div class="flex w-full justify-center">
+					<button class="btn btn-primary flex-initial w-48" onclick={() => invoke('open_folder', { target: 'tg' })}>Open TextGrid Folder</button>
+					<span id="tg-folder-text" class="font-normal h-8 m-2 mx-2 px-2 leading-7 border-b-2 flex-1"
+						>{ tg_folder_path }</span
+					>
 				</div>
-				<div class="flex w-full justify-center space-x-4 mt-2">
-					<ul class="menu menu-sm dropdown-content shadow bg-base-200 rounded-box min-h-12 flex-1">
-						{#each rule.searchTerms as term, termIndex}
-							<li>
-								<div class="flex justify-between items-center">
-									<input type="text" bind:value={rules[ruleIndex][termIndex]} class="input input-bordered flex-1" ondblclick={() => updateItem(ruleIndex, 'searchTerms', termIndex, prompt('Edit search term', term))} />
-									<button class="btn btn-ghost" onclick={() => deleteItem(ruleIndex, 'searchTerms', termIndex)}>✕</button>
-								</div>
-							</li>
-						{/each}
+				<div class="flex w-full justify-center">
+					<button class="btn btn-primary flex-initial w-48" onclick={() => invoke('open_folder', { target: 'wav' })}>Open WAV Folder</button>
+					<span id="wav-folder-text" class="font-normal h-8 m-2 mx-2 px-2 leading-7 border-b-2 flex-1"
+						>{ wav_folder_path }</span
+					>
+				</div>
+				<div class="flex w-full justify-center space-x-4">
+					<input id="rule-name-input" bind:value={currentRuleName} type="text" placeholder="Rule name" class="input input-bordered flex-1" />
+					<button class="btn btn-primary flex-initial w-12" onclick={() => { invoke('add_rule', { ruleName: currentRuleName.trim() }); currentRuleName = ""; document.getElementById("rule-name-input").focus(); } }>Add</button>
+					<input id="search-term-input" bind:value={currentTerm} type="text" placeholder="Find Phoneme" class="input input-bordered flex-1" />
+					<button class="btn btn-primary flex-initial w-12" onclick={() => { invoke('add_search_term', { term: currentTerm.trim() }); currentTerm = ""; document.getElementById("search-term-input").focus(); } }>Add</button>
+					<input id="replace-opt-input" bind:value={currentOpt} type="text" placeholder="Replace Phoneme" class="input input-bordered flex-1" />
+					<button class="btn btn-primary flex-initial w-12" onclick={() => { invoke('add_replace_option', { replaceOpt: currentOpt.trim() }); currentOpt = ""; document.getElementById("replace-opt-input").focus(); }}>Add</button>
+				</div>
+				<div class="flex w-full justify-center space-x-4">
+					<ul
+						tabindex="-1"
+						class="shadow bg-base-200 rounded-box min-h-12 flex-1 px-2 py-2"
+					>
+						<div class="overflow-y-auto overflow-x-hidden min-h-24 max-h-24">
+							{#each $rules as rule, ruleIndex}
+								<li class="group h-8">
+									<div class="flex h-full pl-0">
+										<div class="flex-1 transition-all" tabindex="-1" role="button" ondblclick={() => handleRuleDoubleClick(ruleIndex)}>
+										{#if $editingRuleIndex === ruleIndex}
+											<input type="text" id={"ruleIdx"+ruleIndex} value={rule.rule_name} onkeydown={(e) => handleRuleBlur(e)} onblur={(e) => handleRuleBlur(e)} use:createAutoFocus class="input input-sm w-full transition-all" />
+										{:else}
+											<input type="radio" name="rule-selection" class="btn btn-sm btn-block btn-ghost justify-start transition-all" bind:group="{selectedRuleIdx}" aria-label={rule.rule_name} value={ruleIndex}  onclick={() => invoke('select_rule', { ruleIndex })}/>
+										{/if}
+										</div>
+										<button class="hidden group-hover:inline-flex btn btn-ghost btn-circle btn-xs self-center" onclick={(e) => { invoke('remove_rule', { ruleIndex }) }}>✕</button>
+									</div>
+								</li>
+							{/each}
+						</div>
 					</ul>
-					<ul class="menu menu-sm dropdown-content shadow bg-base-200 rounded-box min-h-12 flex-1">
-						{#each rule.replacements as replacement, replacementIndex}
-							<li>
-								<div class="flex justify-between items-center">
-									<input type="text" bind:value={rules[ruleIndex][replacementIndex]} class="input input-bordered flex-1" ondblclick={() => updateItem(ruleIndex, 'replacements', replacementIndex, prompt('Edit replacement', replacement))} />
-									<button class="btn btn-ghost" onclick={() => deleteItem(ruleIndex, 'replacements', replacementIndex)}>✕</button>
-								</div>
-							</li>
-						{/each}
+					<ul
+						tabindex="-1"
+						class="shadow bg-base-200 rounded-box min-h-12 flex-1 px-2 py-2"
+					>
+						<div class="overflow-y-auto overflow-x-hidden min-h-24 max-h-24">
+							{#if selectedRuleIdx > -1}
+								{#each $rules[selectedRuleIdx].search_terms as term, termIndex}
+									<li class="group h-8">
+										<div class="flex h-full pl-0">
+											<div class="flex-1 transition-all" tabindex="-1" role="button" ondblclick={() => handleTermDoubleClick(termIndex)}>
+											{#if $editingTermIndex === termIndex}
+												<input type="text" id={"termIdx"+termIndex} value={term} onkeydown={(e) => handleTermBlur(e)} onblur={(e) => handleTermBlur(e)} use:createAutoFocus class="input input-sm w-full transition-all" />
+											{:else}
+												<input type="radio" name="term-selection" class="btn btn-sm btn-block btn-ghost justify-start transition-all" bind:group="{selectedTermIdx}" aria-label={term} value={termIndex}  onclick={() => invoke('select_search_term', { termIndex })}/>
+											{/if}
+											</div>
+											<button class="hidden group-hover:inline-flex btn btn-ghost btn-circle btn-xs self-center" onclick={(e) => { invoke('remove_search_term', { termIndex }) }}>✕</button>
+										</div>
+									</li>
+								{/each}
+							{/if}
+						</div>
+					</ul>
+					<ul
+						tabindex="-1"
+						class="shadow bg-base-200 rounded-box min-h-12 flex-1 px-2 py-2"
+					>
+						<div class="overflow-y-auto overflow-x-hidden min-h-24 max-h-24">
+							{#if selectedRuleIdx > -1}
+								{#each $rules[selectedRuleIdx].replace_options as opt, optIndex}
+									<li class="group h-8">
+										<div class="flex h-full pl-0">
+											<div class="flex-1 transition-all" tabindex="-1" role="button" ondblclick={() => handleOptDoubleClick(optIndex)}>
+											{#if $editingOptIndex === optIndex}
+												<input type="text" id={"optIdx"+optIndex} value={opt} onkeydown={(e) => handleOptBlur(e)} onblur={(e) => handleOptBlur(e)} use:createAutoFocus class="input input-sm w-full transition-all" />
+											{:else}
+												<input type="radio" name="opt-selection" class="btn btn-sm btn-block btn-ghost justify-start transition-all" bind:group="{selectedOptIdx}" aria-label={opt} value={optIndex}  onclick={() => invoke('select_replace_option', { optIndex })}/>
+											{/if}
+											</div>
+											<button class="hidden group-hover:inline-flex btn btn-ghost btn-circle btn-xs self-center" onclick={(e) => { invoke('remove_replace_option', { optIndex }) }}>✕</button>
+										</div>
+									</li>
+								{/each}
+							{/if}
+						</div>
 					</ul>
 				</div>
-			{/each} -->
-		</div>
-		<div class="flex w-full justify-center">
-			<button class="btn btn-secondary flex-1" onclick={() => invoke('list_items', { target: 'wav' })}>List</button>
-		</div>
-		<div class="flex w-full justify-center">
-			<button class="btn btn-secondary flex-1" onclick={() => invoke('play_test')}>Play</button>
+				<div class="flex w-full justify-center">
+					<button class="btn btn-secondary flex-1" onclick={() => invoke('list_items', { target: 'wav' })}>List</button>
+				</div>
+				<div class="flex-grow grid grid-cols-4 gap-1 w-full justify-center">
+					<ul
+						tabindex="-1"
+						class="shadow bg-base-200 rounded-box min-h-12 col-span-1 h-auto px-2 py-2"
+					>
+						<div class="overflow-y-auto overflow-x-hidden min-h-24 max-h-32">
+							{#each $items as item, itemIndex}
+								<li class="group h-8">
+									<div class="flex h-full pl-0">
+										<input type="radio" name="item-selection" class="flex-1 btn btn-sm btn-block btn-ghost justify-start transition-all" bind:group="{selectedItemIdx}" aria-label={`${item.dirty?"*":""}${item.tg_stem}`} value={itemIndex}  onclick={() => invoke('select_item', { itemIndex })}/>
+									</div>
+								</li>
+							{/each}
+						</div>
+					</ul>
+					<ul
+						tabindex="-1"
+						class="shadow bg-base-200 rounded-box min-h-12 col-span-1 h-auto px-2 py-2"
+					>
+						<div class="overflow-y-auto overflow-x-hidden min-h-24  max-h-full">
+							{#if selectedItemIdx > -1}
+								{#each $items[selectedItemIdx].found_mark_titles as mark, markIndex}
+									<li class="group h-8">
+										<div class="flex h-full pl-0">
+											<input type="radio" name="mark-selection" class="flex-1 btn btn-sm btn-block btn-ghost justify-start transition-all" bind:group="{selectedMarkIdx}" aria-label={mark} value={markIndex}  onclick={() => invoke('select_mark', { markIndex })}/>
+										</div>
+									</li>
+								{/each}
+							{/if}
+						</div>
+					</ul>
+					<div class="bg-base-200 col-span-2 h-6"></div>
+				</div>
+			</div>
 		</div>
 	</div>
 </section>

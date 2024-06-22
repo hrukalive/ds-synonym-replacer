@@ -11,9 +11,9 @@
   "app": {
     "windows": [
       {
-        "title": "ds-labeler2",
-        "width": 800,
-        "height": 600,
+        "title": "Label Replacer",
+        "width": 912,
+        "height": 650,
         "resizable": true,
         "fullscreen": false
       }
