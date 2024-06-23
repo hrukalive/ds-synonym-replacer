@@ -4,11 +4,11 @@ use std::default::Default;
 use tauri::{Manager, State};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_fs;
-use std::fs;
+use std::{fs, io};
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex};
+use std::sync::{Arc, Mutex};
 use pest::Parser;
 use pest_derive::Parser;
 use chardetng::EncodingDetector;
@@ -44,35 +44,33 @@ struct TextGrid {
     items: Vec<TextGridIntervals>,
 }
 
-impl TextGrid {
-    fn to_string(&self) -> String {
-        let mut result = String::new();
-        result.push_str("File type = \"ooTextFile\"\n");
-        result.push_str("Object class = \"TextGrid\"\n");
-        result.push_str("xmin = 0\n");
-        result.push_str(&format!("xmax = {}\n", self.items.iter().map(|item| item.intervals.iter().map(|interval| interval.xmax).fold(0.0/0.0, f32::max)).fold(0.0/0.0, f32::max)));
-        result.push_str("tiers? <exists>\n");
-        result.push_str(&format!("size = {}\n", self.items.len()));
-        result.push_str("item []:\n");
+fn textgrid_to_string(tg: &TextGrid) -> String {
+    let mut result = String::new();
+    result.push_str("File type = \"ooTextFile\"\n");
+    result.push_str("Object class = \"TextGrid\"\n");
+    result.push_str("\n");
+    result.push_str("xmin = 0\n");
+    result.push_str(&format!("xmax = {}\n", tg.items.iter().map(|item| item.intervals.iter().map(|interval| interval.xmax).fold(0.0/0.0, f32::max)).fold(0.0/0.0, f32::max)));
+    result.push_str("tiers? <exists>\n");
+    result.push_str(&format!("size = {}\n", tg.items.len()));
+    result.push_str("item []:\n");
 
-        for (i, item) in self.items.iter().enumerate() {
-            result.push_str(&format!("    item [{}]:\n", i + 1));
-            result.push_str(&format!("        class = \"IntervalTier\"\n"));
-            result.push_str(&format!("        name = \"{}\"\n", item.name));
-            result.push_str(&format!("        xmin = 0\n"));
-            result.push_str(&format!("        xmax = {}\n", item.intervals.iter().map(|interval| interval.xmax).fold(0.0/0.0, f32::max)));
-            result.push_str(&format!("        intervals: size = {}\n", item.intervals.len()));
+    for (i, item) in tg.items.iter().enumerate() {
+        result.push_str(&format!("    item [{}]:\n", i + 1));
+        result.push_str(&format!("        class = \"IntervalTier\"\n"));
+        result.push_str(&format!("        name = \"{}\"\n", item.name));
+        result.push_str(&format!("        xmin = 0\n"));
+        result.push_str(&format!("        xmax = {}\n", item.intervals.iter().map(|interval| interval.xmax).fold(0.0/0.0, f32::max)));
+        result.push_str(&format!("        intervals: size = {}\n", item.intervals.len()));
 
-            for (j, interval) in item.intervals.iter().enumerate() {
-                result.push_str(&format!("        intervals [{}]:\n", j + 1));
-                result.push_str(&format!("            xmin = {}\n", interval.xmin));
-                result.push_str(&format!("            xmax = {}\n", interval.xmax));
-                result.push_str(&format!("            text = \"{}\"\n", interval.text));
-            }
+        for (j, interval) in item.intervals.iter().enumerate() {
+            result.push_str(&format!("            intervals [{}]:\n", j + 1));
+            result.push_str(&format!("                xmin = {}\n", interval.xmin));
+            result.push_str(&format!("                xmax = {}\n", interval.xmax));
+            result.push_str(&format!("                text = \"{}\"\n", interval.text));
         }
-
-        result
     }
+    result
 }
 
 #[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -385,7 +383,7 @@ fn add_search_term(term: String, app: tauri::AppHandle, state: State<'_, Mutex<A
     if term.trim().is_empty() { return Ok(()); }
     let mut proj_state = state.lock().unwrap();
     if let Some(rule_index) = proj_state.selected_rule_idx {
-        let mut search_terms = &mut proj_state.rules.get_mut(rule_index as usize).unwrap().search_terms;
+        let search_terms = &mut proj_state.rules.get_mut(rule_index as usize).unwrap().search_terms;
         if search_terms.iter().any(|w| w == &term) {
             proj_state.selected_term_idx = Some(search_terms.iter().position(|w| w == &term).unwrap() as i32);
             let _ = app.emit("sync_app_selection_state", (proj_state.selected_rule_idx, proj_state.selected_term_idx, proj_state.selected_opt_idx));
@@ -422,7 +420,7 @@ fn rename_search_term(term_index: i32, new_term: String, app: tauri::AppHandle, 
     if new_term.trim().is_empty() { return Ok(()); }
     let mut proj_state = state.lock().unwrap();
     if let Some(rule_index) = proj_state.selected_rule_idx {
-        let mut search_terms = &mut proj_state.rules.get_mut(rule_index as usize).unwrap().search_terms;
+        let search_terms = &mut proj_state.rules.get_mut(rule_index as usize).unwrap().search_terms;
         if term_index >= 0 && term_index < search_terms.len() as i32 && !search_terms.iter().any(|w| w == &new_term) {
             search_terms[term_index as usize] = new_term;
             let _ = app.emit("sync_app_state", proj_state.clone());
@@ -435,7 +433,7 @@ fn rename_search_term(term_index: i32, new_term: String, app: tauri::AppHandle, 
 fn select_search_term(term_index: i32, app: tauri::AppHandle, state: State<'_, Mutex<AppProjectState>>) -> Result<(), String> {
     let mut proj_state = state.lock().unwrap();
     if let Some(rule_index) = proj_state.selected_rule_idx {
-        let mut search_terms = &mut proj_state.rules.get_mut(rule_index as usize).unwrap().search_terms;
+        let search_terms = &mut proj_state.rules.get_mut(rule_index as usize).unwrap().search_terms;
         let new_val = if term_index >= 0 && term_index < search_terms.len() as i32 { Some(term_index) } else { None };
         if proj_state.selected_term_idx != new_val {
             proj_state.selected_term_idx = new_val;
@@ -450,7 +448,7 @@ fn add_replace_option(replace_opt: String, app: tauri::AppHandle, state: State<'
     if replace_opt.trim().is_empty() { return Ok(()); }
     let mut proj_state = state.lock().unwrap();
     if let Some(rule_index) = proj_state.selected_rule_idx {
-        let mut replace_options = &mut proj_state.rules.get_mut(rule_index as usize).unwrap().replace_options;
+        let replace_options = &mut proj_state.rules.get_mut(rule_index as usize).unwrap().replace_options;
         if replace_options.iter().any(|w| w == &replace_opt) {
             proj_state.selected_opt_idx = Some(replace_options.iter().position(|w| w == &replace_opt).unwrap() as i32);
             let _ = app.emit("sync_app_selection_state", (proj_state.selected_rule_idx, proj_state.selected_term_idx, proj_state.selected_opt_idx));
@@ -487,7 +485,7 @@ fn rename_replace_option(opt_index: i32, new_opt: String, app: tauri::AppHandle,
     if new_opt.trim().is_empty() { return Ok(()); }
     let mut proj_state = state.lock().unwrap();
     if let Some(rule_index) = proj_state.selected_rule_idx {
-        let mut replace_options = &mut proj_state.rules.get_mut(rule_index as usize).unwrap().replace_options;
+        let replace_options = &mut proj_state.rules.get_mut(rule_index as usize).unwrap().replace_options;
         if opt_index >= 0 && opt_index < replace_options.len() as i32 && !replace_options.iter().any(|w| w == &new_opt) {
             replace_options[opt_index as usize] = new_opt;
             let _ = app.emit("sync_app_state", proj_state.clone());
@@ -500,7 +498,7 @@ fn rename_replace_option(opt_index: i32, new_opt: String, app: tauri::AppHandle,
 fn select_replace_option(opt_index: i32, app: tauri::AppHandle, state: State<'_, Mutex<AppProjectState>>) -> Result<(), String> {
     let mut proj_state = state.lock().unwrap();
     if let Some(rule_index) = proj_state.selected_rule_idx {
-        let mut replace_options = &mut proj_state.rules.get_mut(rule_index as usize).unwrap().replace_options;
+        let replace_options = &mut proj_state.rules.get_mut(rule_index as usize).unwrap().replace_options;
         let new_val = if opt_index >= 0 && opt_index < replace_options.len() as i32 { Some(opt_index) } else { None };
         if proj_state.selected_opt_idx != new_val {
             proj_state.selected_opt_idx = new_val;
@@ -561,14 +559,15 @@ fn select_mark(mark_index: i32, app: tauri::AppHandle, state: State<'_, Mutex<Se
 fn next_mark(app: tauri::AppHandle, state: State<'_, Mutex<SessionItems>>) -> Result<(), String> {
     let mut session = state.lock().unwrap();
     if let Some(item_index) = session.selected_item {
-        if session.selected_mark[item_index as usize] != None {
-            if session.selected_mark[item_index as usize] == Some(session.items[item_index as usize].found_mark_idxs.len() as i32 - 1) && session.selected_item < Some(session.items.len() as i32 - 1) {
+        let found_mark_idxs = &session.items[item_index as usize].found_mark_idxs;
+        if let Some(mark_index) = session.selected_mark[item_index as usize] {
+            if mark_index < found_mark_idxs.len() as i32 - 1 {
+                session.selected_mark[item_index as usize] = Some(mark_index + 1);
+                let _ = app.emit("sync_item_selection_state", (session.selected_item, mark_index + 1));
+            } else if item_index < session.items.len() as i32 - 1 && mark_index == found_mark_idxs.len() as i32 - 1 {
                 session.selected_item = Some(item_index + 1);
                 session.selected_mark[(item_index + 1) as usize] = Some(0);
-                let _ = app.emit("sync_item_selection_state", (session.selected_item, session.selected_mark[session.selected_item.unwrap() as usize]));
-            } else if session.selected_mark[item_index as usize] < Some(session.items[item_index as usize].found_mark_idxs.len() as i32 - 1) {
-                session.selected_mark[item_index as usize] = Some(session.selected_mark[item_index as usize].unwrap() + 1);
-                let _ = app.emit("sync_item_selection_state", (session.selected_item, session.selected_mark[session.selected_item.unwrap() as usize]));
+                let _ = app.emit("sync_item_selection_state", (item_index + 1, 0));
             }
         }
     }
@@ -579,14 +578,14 @@ fn next_mark(app: tauri::AppHandle, state: State<'_, Mutex<SessionItems>>) -> Re
 fn prev_mark(app: tauri::AppHandle, state: State<'_, Mutex<SessionItems>>) -> Result<(), String> {
     let mut session = state.lock().unwrap();
     if let Some(item_index) = session.selected_item {
-        if session.selected_mark[item_index as usize] != None {
-            if session.selected_mark[item_index as usize] == Some(0) && item_index > 0 {
+        if let Some(mark_index) = session.selected_mark[item_index as usize] {
+            if mark_index > 0 {
+                session.selected_mark[item_index as usize] = Some(mark_index - 1);
+                let _ = app.emit("sync_item_selection_state", (session.selected_item, mark_index - 1));
+            } else if item_index > 0 && mark_index == 0 {
                 session.selected_item = Some(item_index - 1);
-                session.selected_mark[(item_index - 1) as usize] = Some(session.items[item_index as usize].found_mark_idxs.len() as i32 - 1);
-                let _ = app.emit("sync_item_selection_state", (session.selected_item, session.selected_mark[session.selected_item.unwrap() as usize]));
-            } else if session.selected_mark[item_index as usize] > Some(0) {
-                session.selected_mark[item_index as usize] = Some(session.selected_mark[item_index as usize].unwrap() - 1);
-                let _ = app.emit("sync_item_selection_state", (session.selected_item, session.selected_mark[session.selected_item.unwrap() as usize]));
+                session.selected_mark[(item_index - 1) as usize] = Some(session.items[(item_index - 1) as usize].found_mark_idxs.len() as i32 - 1);
+                let _ = app.emit("sync_item_selection_state", (item_index - 1, session.selected_mark[session.selected_item.unwrap() as usize]));
             }
         }
     }
@@ -594,20 +593,21 @@ fn prev_mark(app: tauri::AppHandle, state: State<'_, Mutex<SessionItems>>) -> Re
 }
 
 #[tauri::command]
-fn choose_a_replace_option(opt_index: i32, app: tauri::AppHandle, state: State<'_, Mutex<SessionItems>>) -> Result<(), String> {
+fn choose_a_replace_option(opt_index: i32, app: tauri::AppHandle, state: State<'_, Mutex<SessionItems>>) -> Result<Option<(Vec<Option<i32>>, bool)>, String> {
     let mut session = state.lock().unwrap();
     if let Some(item_index) = session.selected_item {
         if let Some(mark_index) = session.selected_mark[item_index as usize] {
-            let mut item = &mut session.items.get_mut(item_index as usize).unwrap();
+            let item = session.items.get_mut(item_index as usize).unwrap();
             let new_val = if opt_index > -1 { Some(opt_index) } else { None };
             if item.selected_options[mark_index as usize] != new_val {
                 item.selected_options[mark_index as usize] = new_val;
-                item.dirty = true;
-                let _ = app.emit("sync_item_selected_options", (item_index, mark_index, item.selected_options[mark_index as usize]));
+                item.dirty = item.selected_options.iter().any(|x| x.is_some());
+                // let _ = app.emit("sync_item_selected_options", (item_index, mark_index, item.selected_options.clone(), item.dirty));
+                return Ok(Some((item.selected_options.clone(), item.dirty)));
             }
         }
     }
-    Ok(())
+    Ok(None)
 }
 
 #[tauri::command]
@@ -656,7 +656,7 @@ fn open_folder(target: &str, app_handle: tauri::AppHandle, state: State<'_, Mute
 
 #[tauri::command]
 fn list_items(app: tauri::AppHandle, project_state: State<'_, Mutex<AppProjectState>>, session_state: State<'_, Mutex<SessionItems>>) -> Result<(), String> {
-    let mut proj_state = project_state.lock().unwrap();
+    let proj_state = project_state.lock().unwrap();
     let mut sess_state = session_state.lock().unwrap();
     if proj_state.tg_folder == None {
         return Err("TextGrid folder must be set.".into());
@@ -698,10 +698,10 @@ fn list_items(app: tauri::AppHandle, project_state: State<'_, Mutex<AppProjectSt
                                                 |wav_fn| Some(wav_folder_unwrap.join(wav_fn))
                                             )
                                     } else { None },
+                                    selected_options: vec![None; found_mark_idxs.len()],
+                                    replace_options: active_rule.replace_options.clone(),
                                     found_mark_idxs,
                                     found_mark_titles,
-                                    replace_options: active_rule.replace_options.clone(),
-                                    selected_options: vec![None; active_rule.replace_options.len()],
                                     dirty: false,
                                 };
                                 sess_state.items.push(item_record);
@@ -721,6 +721,44 @@ fn list_items(app: tauri::AppHandle, project_state: State<'_, Mutex<AppProjectSt
 }
 
 #[tauri::command]
+fn save_textgrids(app_handle: tauri::AppHandle, state: State<'_, Mutex<SessionItems>>) -> Result<(), String> {
+    let mut sess_state = state.lock().unwrap();
+    let mut resync = false;
+    for item in sess_state.items.iter_mut() {
+        if item.dirty {
+            let opts = &item.replace_options;
+            // let _ = item.tg_file.clone().with_extension("textgrid").write_to(&item.tg_content);
+            let mut new_tg = item.tg_content.clone();
+            for (i, mark_idx) in item.found_mark_idxs.iter().enumerate() {
+                if let Some(opt_idx) = item.selected_options[i] {
+                    new_tg.items.get_mut(1).unwrap().intervals.get_mut(*mark_idx).unwrap().text = opts[opt_idx as usize].clone();
+                }
+            }
+            let bak_path = item.tg_file.clone().with_extension("TextGrid.bak");
+            if !bak_path.exists() {
+                fs::copy(&item.tg_file, &bak_path).map_err(|e| e.to_string())?;
+            }
+            let _ = fs::write(item.tg_file.clone(), textgrid_to_string(&new_tg)).map_err(|e| e.to_string()).and_then(|_| { item.dirty = false; resync = true; Ok(()) });
+        }
+    }
+    if resync {
+        let _ = app_handle.emit("sync_session_state", sess_state.clone());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn init_state(app_handle: tauri::AppHandle, state: State<'_, Mutex<AppProjectState>>, session_state: State<'_, Mutex<SessionItems>>) -> Result<(), String> {
+    let mut app_state = state.lock().unwrap();
+    let mut sess_state = session_state.lock().unwrap();
+    app_state.clone_from(&AppProjectState::default());
+    sess_state.clone_from(&SessionItems::default());
+    let _ = app_handle.emit("sync_app_state", app_state.clone());
+    let _ = app_handle.emit("sync_session_state", sess_state.clone());
+    Ok(())
+}
+
+#[tauri::command]
 fn save_state(app_handle: tauri::AppHandle, state: State<'_, Mutex<AppProjectState>>, session_state: State<'_, Mutex<SessionItems>>) -> Result<(), String> {
     let file_path = app_handle.dialog()
         .file()
@@ -729,10 +767,11 @@ fn save_state(app_handle: tauri::AppHandle, state: State<'_, Mutex<AppProjectSta
     match file_path {
         Some(path) => {
             let app_state = state.lock().unwrap();
-            let session_state = session_state.lock().unwrap();
+            // let session_state = session_state.lock().unwrap();
             let app_state_json = serde_json::to_string(&*app_state).map_err(|e| e.to_string())?;
-            let session_state_json = serde_json::to_string(&*session_state).map_err(|e| e.to_string())?;
-            fs::write(path, format!("{{\"app_state\": {}, \"session_state\": {}}}", app_state_json, session_state_json)).map_err(|e| e.to_string())?;
+            // let session_state_json = serde_json::to_string(&*session_state).map_err(|e| e.to_string())?;
+            // fs::write(path, format!("{{\"app_state\": {}, \"session_state\": {}}}", app_state_json, session_state_json)).map_err(|e| e.to_string())?;
+            fs::write(path, format!("{{\"app_state\": {}}}", app_state_json)).map_err(|e| e.to_string())?;
             Ok(())
         },
         None => return Err("User did not select a file.".into()),
@@ -750,11 +789,11 @@ fn load_state(app_handle: tauri::AppHandle, state: State<'_, Mutex<AppProjectSta
             let file_contents = fs::read_to_string(&pathres.path).map_err(|e| e.to_string())?;
             let json: serde_json::Value = serde_json::from_str(&file_contents).map_err(|e| e.to_string())?;
             let app_state_json = json["app_state"].to_string();
-            let session_state_json = json["session_state"].to_string();
+            // let session_state_json = json["session_state"].to_string();
             let mut app_state = state.lock().unwrap();
-            let mut session_state = session_state.lock().unwrap();
+            let session_state = session_state.lock().unwrap();
             *app_state = serde_json::from_str(&app_state_json).map_err(|e| e.to_string())?;
-            *session_state = serde_json::from_str(&session_state_json).map_err(|e| e.to_string())?;
+            // *session_state = serde_json::from_str(&session_state_json).map_err(|e| e.to_string())?;
             let _ = app_handle.emit("sync_app_state", app_state.clone());
             let _ = app_handle.emit("sync_session_state", session_state.clone());
             Ok(())
@@ -764,31 +803,68 @@ fn load_state(app_handle: tauri::AppHandle, state: State<'_, Mutex<AppProjectSta
 }
 
 #[tauri::command]
-fn play_test(app_handle: tauri::AppHandle, sink_global: State<'_, Mutex<rodio::Sink>>) -> Result<(), String> {
-    // Open the audio file
-    let file = File::open("N:\\test.mp3").map_err(|e| e.to_string())?;
-    let source = Decoder::new(BufReader::new(file.try_clone().unwrap())).map_err(|e| e.to_string())?;
+fn play_selected(session_state: State<'_, Mutex<SessionItems>>, sound_state: State<'_, Mutex<AppSoundEngine>>) -> Result<(), String> {
+    let session_state = session_state.lock().unwrap();
+    let mut sound_engine = sound_state.lock().unwrap();
 
-    // Take the middle part of the file from 30s to 34s
-    let source = source.skip_duration(Duration::from_secs(15)).take_duration(Duration::from_millis(4000 - 500));
+    if let Some(item_index) = session_state.selected_item {
+        if let Some(mark_index) = session_state.selected_mark[item_index as usize] {
+            let item = &session_state.items[item_index as usize];
+            if let Some(wav_file) = &item.wav_file {
+                if sound_engine.decoded_file.as_path() != wav_file.as_path() {
+                    sound_engine.decoded_file = item.wav_file.clone().unwrap();
+                    sound_engine.source = Some(Sound::load(item.wav_file.as_ref().unwrap()).map_err(|e| e.to_string())?);
+                }
+                if let Some(sound) = &sound_engine.source {
+                    let tg = &item.tg_content;
+                    let phones = &tg.items[1].intervals[item.found_mark_idxs[mark_index as usize]];
 
-    // Apply fade in and fade out
-    let source = source.fade_in(Duration::from_millis(200));
-    let source = fadeout(source, Duration::from_millis(200));
-
-    // Play the sound
-    let sink = sink_global.lock().unwrap();
-    sink.clear();
-    sink.append(source);
-    sink.play();
-
+                    // Open the audio file
+                    let source = fadeout(
+                        sound.decoder()
+                            .skip_duration(Duration::from_millis(max(0, (phones.xmin * 1000. - 300.) as u64)))
+                            .take_duration(Duration::from_millis((300. + 600. + (phones.xmax - phones.xmin) * 1000.) as u64))
+                            .fade_in(Duration::from_millis(50))
+                        , Duration::from_millis(50)
+                    );
+                    sound_engine.sink.clear();
+                    sound_engine.sink.append(source);
+                    sound_engine.sink.play();
+                }
+            }
+        }
+    }
     Ok(())
+}
+
+pub struct Sound (Arc<Vec<u8>>);
+
+impl AsRef<[u8]> for Sound {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl Sound {
+    pub fn load(filename: &PathBuf) -> io::Result<Sound> {
+        use std::fs::File;
+        let mut buf = Vec::new();
+        let mut file = File::open(filename)?;
+        file.read_to_end(&mut buf)?;
+        Ok(Sound(Arc::new(buf)))
+    }
+    pub fn cursor(self: &Self) -> io::Cursor<Sound> {
+        io::Cursor::new(Sound(self.0.clone()))
+    }
+    pub fn decoder(self: &Self) -> rodio::Decoder<io::Cursor<Sound>> {
+        Decoder::new(self.cursor()).unwrap()
+    }
 }
 
 struct AppSoundEngine {
     sink: Sink,
     decoded_file: PathBuf,
-    source: Option<Decoder<BufReader<File>>>,
+    source: Option<Sound>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -814,9 +890,9 @@ pub fn run() {
         .manage(Mutex::new(SessionItems::default()))
         .manage(Mutex::new(sound_engine))
         .invoke_handler(tauri::generate_handler![
-            load_state, save_state,
+            init_state, load_state, save_state, save_textgrids,
             get_config_state, get_session_items,
-            open_folder, list_items, play_test,
+            open_folder, list_items, play_selected,
             add_rule, rename_rule, remove_rule, select_rule,
             add_search_term, remove_search_term, rename_search_term, select_search_term,
             add_replace_option, remove_replace_option, rename_replace_option, select_replace_option,

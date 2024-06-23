@@ -42,6 +42,7 @@
 	let currentRuleName = $state("");
 	let currentTerm = $state("");
 	let currentOpt = $state("");
+	let optButtonDisabled = $state(false);
 
     let editingRuleIndex = writable(-1);
     function handleRuleDoubleClick(index) {
@@ -50,7 +51,6 @@
     function handleRuleBlur(event) {
         if (event.type === 'blur' || (event.type === 'keydown' && event.key === 'Enter')) {
 			if (event.target.value.trim().length > 0) {
-				console.log(event.target.value.trim());
 				invoke('rename_rule', { ruleIndex: $editingRuleIndex, newName: event.target.value.trim() });
 			}
             editingRuleIndex.set(-1);
@@ -65,7 +65,6 @@
 	function handleTermBlur(event) {
 		if (event.type === 'blur' || (event.type === 'keydown' && event.key === 'Enter')) {
 			if (event.target.value.trim().length > 0) {
-				console.log(event.target.value.trim());
 				invoke('rename_search_term', { termIndex: $editingTermIndex, newTerm: event.target.value.trim() });
 			}
 			editingTermIndex.set(-1);
@@ -80,7 +79,6 @@
 	function handleOptBlur(event) {
 		if (event.type === 'blur' || (event.type === 'keydown' && event.key === 'Enter')) {
 			if (event.target.value.trim().length > 0) {
-				console.log(event.target.value.trim());
 				invoke('rename_replace_option', { optIndex: $editingOptIndex, newOpt: event.target.value.trim() });
 			}
 			editingOptIndex.set(-1);
@@ -114,7 +112,7 @@
 	})
 
 	listen('sync_app_selection_state', (event) => {
-		console.log(event.payload);
+		console.log('sync_app_selection_state', event.payload);
 		if (event.payload !== null && event.payload !== undefined) {
 			selectedRuleIdx = event.payload[0] !== null ? event.payload[0] : -1;
 			selectedTermIdx = event.payload[1] !== null ? event.payload[1] : -1;
@@ -123,25 +121,38 @@
 	})
 
 	listen('sync_item_selection_state', (event) => {
-		console.log(event.payload);
+		console.log('sync_item_selection_state', event.payload);
 		if (event.payload !== null && event.payload !== undefined) {
 			selectedItemIdx = event.payload[0] !== null ? event.payload[0] : -1;
 			selectedMarkIdx = event.payload[1] !== null ? event.payload[1] : -1;
 		}
 	})
 
-	listen('sync_item_selected_options', (event) => {
-		console.log(event.payload);
-		if (event.payload !== null && event.payload !== undefined) {
-			selectedItemIdx = event.payload[0] !== null ? event.payload[0] : -1;
-			selectedMarkIdx = event.payload[1] !== null ? event.payload[1] : -1;
-			items.update(items => {
-				items[selectedRuleIdx].selected_options[selectedMarkIdx] = event.payload[2];
-				items[selectedRuleIdx].dirty = true;
-				return items
-			})
-		}
-	})
+	// listen('sync_item_selected_options', (event) => {
+	// 	console.log('sync_item_selected_options', event.payload);
+	// 	if (event.payload !== null && event.payload !== undefined) {
+	// 		// selectedItemIdx = event.payload[0] !== null ? event.payload[0] : -1;
+	// 		// selectedMarkIdx = event.payload[1] !== null ? event.payload[1] : -1;
+	// 		items.update(items => {
+	// 			items[selectedItemIdx].selected_options = event.payload[2];
+	// 			items[selectedItemIdx].dirty = event.payload[3];
+	// 			return items
+	// 		})
+	// 	}
+	// })
+
+	async function choose_a_replace_option(optIndex) {
+		optButtonDisabled = true;
+		let payload = await invoke('choose_a_replace_option', { optIndex });
+		items.update(items => {
+			items[selectedItemIdx].selected_options = payload[0];
+			items[selectedItemIdx].dirty = payload[1];
+			return items
+		})
+		await invoke('next_mark');
+		await invoke('play_selected');
+		optButtonDisabled = false;
+	}
 
 	function createAutoFocus(el) {
 		el.focus();
@@ -243,6 +254,7 @@
 							class="menu menu-sm dropdown-content mt-3 z-[1] p-2 shadow bg-base-300 rounded-box w-52 transition-opacity"
 							style:visibility={isDropdownOpen ? 'visible' : 'hidden'}
 						>
+							<li><a onclick={() => invoke('init_state')}>New project</a></li>
 							<li><a onclick={() => invoke('load_state')}>Open project</a></li>
 							<li><a onclick={() => invoke('save_state')}>Save project</a></li>
 						</ul>
@@ -284,12 +296,12 @@
 					>
 				</div>
 				<div class="flex w-full justify-center space-x-4">
-					<input id="rule-name-input" bind:value={currentRuleName} type="text" placeholder="Rule name" class="input input-bordered flex-1" />
-					<button class="btn btn-primary flex-initial w-12" onclick={() => { invoke('add_rule', { ruleName: currentRuleName.trim() }); currentRuleName = ""; document.getElementById("rule-name-input").focus(); } }>Add</button>
-					<input id="search-term-input" bind:value={currentTerm} type="text" placeholder="Find Phoneme" class="input input-bordered flex-1" />
-					<button class="btn btn-primary flex-initial w-12" onclick={() => { invoke('add_search_term', { term: currentTerm.trim() }); currentTerm = ""; document.getElementById("search-term-input").focus(); } }>Add</button>
-					<input id="replace-opt-input" bind:value={currentOpt} type="text" placeholder="Replace Phoneme" class="input input-bordered flex-1" />
-					<button class="btn btn-primary flex-initial w-12" onclick={() => { invoke('add_replace_option', { replaceOpt: currentOpt.trim() }); currentOpt = ""; document.getElementById("replace-opt-input").focus(); }}>Add</button>
+					<input id="rule-name-input" bind:value={currentRuleName} type="text" placeholder="Rule name" class="input input-sm input-bordered flex-1" />
+					<button class="btn btn-primary btn-sm flex-initial w-8" onclick={() => { invoke('add_rule', { ruleName: currentRuleName.trim() }); currentRuleName = ""; document.getElementById("rule-name-input").focus(); } }>+</button>
+					<input id="search-term-input" bind:value={currentTerm} type="text" placeholder="Find Phoneme" class="input input-sm input-bordered flex-1" />
+					<button class="btn btn-primary btn-sm flex-initial w-8" onclick={() => { invoke('add_search_term', { term: currentTerm.trim() }); currentTerm = ""; document.getElementById("search-term-input").focus(); } }>+</button>
+					<input id="replace-opt-input" bind:value={currentOpt} type="text" placeholder="Replace Phoneme" class="input input-sm input-bordered flex-1" />
+					<button class="btn btn-primary btn-sm flex-initial w-8" onclick={() => { invoke('add_replace_option', { replaceOpt: currentOpt.trim() }); currentOpt = ""; document.getElementById("replace-opt-input").focus(); }}>+</button>
 				</div>
 				<div class="flex w-full justify-center space-x-4">
 					<ul
@@ -363,10 +375,26 @@
 				<div class="flex w-full justify-center">
 					<button class="btn btn-secondary flex-1" onclick={() => invoke('list_items', { target: 'wav' })}>List</button>
 				</div>
-				<div class="flex-grow grid grid-cols-4 gap-1 w-full justify-center">
+				<div class="flex w-full justify-center">
+					<div class="grid grid-cols-8 gap-2 w-full justify-center">
+						<div class="col-span-2 gap-2 flex">
+							<button class="flex-1 btn btn-neutral btn-sm" onclick={() => invoke('prev_item')}>Previous</button>
+							<button class="flex-1 btn btn-neutral btn-sm" onclick={() => invoke('next_item')}>Next</button>
+						</div>
+						<div class="col-span-3 gap-2 flex">
+							<button class="flex-1 btn btn-neutral btn-sm" onclick={() => invoke('prev_mark')}>Previous</button>
+							<button class="flex-1 btn btn-neutral btn-sm" onclick={() => invoke('next_mark')}>Next</button>
+						</div>
+						<div class="col-span-3 gap-2 flex">
+							<button class="flex-1 btn btn-neutral btn-sm" onclick={() => invoke('play_selected')}>Play</button>
+							<button class="flex-1 btn btn-neutral btn-sm" onclick={() => invoke('save_textgrids')}>Save all</button>
+						</div>
+					</div>
+				</div>
+				<div class="flex-grow grid grid-cols-8 gap-2 w-full justify-center">
 					<ul
 						tabindex="-1"
-						class="shadow bg-base-200 rounded-box min-h-12 col-span-1 h-auto px-2 py-2"
+						class="shadow bg-base-200 rounded-box min-h-12 col-span-2 h-auto px-2 py-2"
 					>
 						<div class="overflow-y-auto overflow-x-hidden min-h-24 max-h-32">
 							{#each $items as item, itemIndex}
@@ -380,9 +408,9 @@
 					</ul>
 					<ul
 						tabindex="-1"
-						class="shadow bg-base-200 rounded-box min-h-12 col-span-1 h-auto px-2 py-2"
+						class="shadow bg-base-200 rounded-box min-h-12 col-span-3 h-auto px-2 py-2"
 					>
-						<div class="overflow-y-auto overflow-x-hidden min-h-24  max-h-full">
+						<div class="overflow-y-auto overflow-x-hidden min-h-24 max-h-40">
 							{#if selectedItemIdx > -1}
 								{#each $items[selectedItemIdx].found_mark_titles as mark, markIndex}
 									<li class="group h-8">
@@ -394,7 +422,16 @@
 							{/if}
 						</div>
 					</ul>
-					<div class="bg-base-200 col-span-2 h-6"></div>
+					<div class="flex bg-base-200 rounded-box col-span-3 h-auto justify-center items-center">
+						<div class="flex flex-wrap gap-2 justify-center items-center transition-all ease-in-out">
+							{#if selectedItemIdx > -1 && selectedMarkIdx > -1 && $items[selectedItemIdx].selected_options.length > 0}
+								<button class="btn {$items[selectedItemIdx].selected_options[selectedMarkIdx] === null ? 'btn-accent btn-lg' : 'btn-primary btn-md'} transition-all ease-in-out" disabled={optButtonDisabled} onclick={() => { choose_a_replace_option(-1) } }>✅</button>
+								{#each $items[selectedItemIdx].replace_options as opt, optIndex}
+									<button class="btn {$items[selectedItemIdx].selected_options[selectedMarkIdx] === optIndex ? 'btn-accent btn-lg' : 'btn-primary btn-md'} transition-all ease-in-out" disabled={optButtonDisabled} onclick={() => { choose_a_replace_option(optIndex) } }>{ opt }</button>
+								{/each}
+							{/if}
+						</div>
+					</div>
 				</div>
 			</div>
 		</div>
