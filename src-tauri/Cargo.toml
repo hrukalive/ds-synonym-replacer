@@ -23,10 +23,10 @@ serde = { version = "1.0", features = ["derive"] }
 tauri = { version = "2.0.0-beta.22", features = [] }
 tauri-plugin-dialog = "2.0.0-beta"
 tauri-plugin-fs = "2.0.0-beta"
-tauri-plugin-persisted-scope = "2.0.0-beta"
 tauri-plugin-shell = "2.0.0-beta"
 tauri-plugin-single-instance = "2.0.0-beta"
 tauri-plugin-window-state = "2.0.0-beta"
+tauri-plugin-store = "2.0.0-beta"
 pest = "2.7.10"
 pest_derive = "2.7.10"
 chardet = "0.2.4"

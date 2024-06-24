@@ -1,19 +1,24 @@
+use tauri::Wry;
 use std::cmp::{max, min};
 use std::collections::HashSet;
 use std::default::Default;
 use tauri::{Manager, State};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_fs;
+use tauri_plugin_store::{with_store, Store, StoreBuilder, StoreCollection};
 use std::{fs, io};
 use std::fs::File;
 use std::io::{BufReader, Read};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use pest::Parser;
 use pest_derive::Parser;
 use chardetng::EncodingDetector;
 use rodio::{Decoder, OutputStream, Sink, Source, Sample};
 use std::time::Duration;
+use rodio::cpal::traits::{HostTrait, DeviceTrait};
+use rodio::cpal;
+use rodio::source::SineWave;
 
 
 #[derive(Clone, serde::Serialize)]
@@ -91,6 +96,67 @@ struct AppProjectState {
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
+struct AppSettings {
+    theme: String,
+    sound_device: Option<String>,
+    volume_factor: f32,
+    auto_save: bool,
+    auto_next: bool,
+}
+
+impl AppSettings {
+    pub fn load_from_store<R: tauri::Runtime>(
+        store: &Store<R>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let theme = store
+            .get("appSettings.theme")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "cupcake".to_string());
+
+        let sound_device = store
+            .get("appSettings.sound_device")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        let volume_factor = store
+            .get("appSettings.volume_factor")
+            .and_then(|v| v.as_f64())
+            .map(|f| f as f32)
+            .unwrap_or(1.0);
+
+        let auto_save = store
+            .get("appSettings.auto_save")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+
+        let auto_next = store
+            .get("appSettings.auto_next")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+
+        Ok(AppSettings {
+            theme,
+            sound_device,
+            volume_factor,
+            auto_save,
+            auto_next,
+        })
+    }
+
+    pub fn save_to_store<R: tauri::Runtime>(&self, store: &mut Store<R>) -> Result<(), Box<dyn std::error::Error>> {
+        let json = serde_json::to_value(&self)?;
+        store.insert("appSettings.theme".to_string(), json.get("theme").unwrap().clone())?;
+        store.insert("appSettings.sound_device".to_string(), json.get("sound_device").unwrap().clone())?;
+        store.insert("appSettings.volume_factor".to_string(), json.get("volume_factor").unwrap().clone())?;
+        store.insert("appSettings.auto_save".to_string(), json.get("auto_save").unwrap().clone())?;
+        store.insert("appSettings.auto_next".to_string(), json.get("auto_next").unwrap().clone())?;
+        store.save()?;
+        Ok(())
+    }
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct ItemRecord {
     tg_file: PathBuf,
     tg_stem: String,
@@ -111,9 +177,10 @@ struct SessionItems {
 }
 
 /// Internal function that builds a `FadeOut` object.
-pub fn fadeout<I: Source>(input: I, duration: Duration) -> FadeOut<I> where <I as Iterator>::Item: Sample {
+pub fn fadeout<I: Source>(input: I, duration: Duration, total_duration: Option<Duration>) -> FadeOut<I> where <I as Iterator>::Item: Sample {
     let duration = duration.as_secs() * 1000000000 + duration.subsec_nanos() as u64;
-    let input_dur = input.total_duration().expect("Cannot get input duration.");
+    // let input_dur = input.total_duration().expect("Cannot get input duration.");
+    let input_dur = total_duration.unwrap_or_else(|| input.total_duration().expect("Cannot get input duration."));
     let start_fade = input_dur.as_secs() * 1000000000 + input_dur.subsec_nanos() as u64 - duration;
 
     FadeOut {
@@ -593,7 +660,7 @@ fn prev_mark(app: tauri::AppHandle, state: State<'_, Mutex<SessionItems>>) -> Re
 }
 
 #[tauri::command]
-fn choose_a_replace_option(opt_index: i32, app: tauri::AppHandle, state: State<'_, Mutex<SessionItems>>) -> Result<Option<(Vec<Option<i32>>, bool)>, String> {
+fn choose_a_replace_option(opt_index: i32, state: State<'_, Mutex<SessionItems>>) -> Result<Option<(Vec<Option<i32>>, bool)>, String> {
     let mut session = state.lock().unwrap();
     if let Some(item_index) = session.selected_item {
         if let Some(mark_index) = session.selected_mark[item_index as usize] {
@@ -602,7 +669,6 @@ fn choose_a_replace_option(opt_index: i32, app: tauri::AppHandle, state: State<'
             if item.selected_options[mark_index as usize] != new_val {
                 item.selected_options[mark_index as usize] = new_val;
                 item.dirty = item.selected_options.iter().any(|x| x.is_some());
-                // let _ = app.emit("sync_item_selected_options", (item_index, mark_index, item.selected_options.clone(), item.dirty));
                 return Ok(Some((item.selected_options.clone(), item.dirty)));
             }
         }
@@ -616,6 +682,11 @@ fn get_config_state(state: State<'_, Mutex<AppProjectState>>) -> Result<AppProje
 }
 #[tauri::command]
 fn get_session_items(state: State<'_, Mutex<SessionItems>>) -> Result<SessionItems, String> {
+    Ok(state.lock().unwrap().clone())
+}
+
+#[tauri::command]
+fn get_app_settings(state: State<'_, Mutex<AppSettings>>) -> Result<AppSettings, String> {
     Ok(state.lock().unwrap().clone())
 }
 
@@ -759,7 +830,7 @@ fn init_state(app_handle: tauri::AppHandle, state: State<'_, Mutex<AppProjectSta
 }
 
 #[tauri::command]
-fn save_state(app_handle: tauri::AppHandle, state: State<'_, Mutex<AppProjectState>>, session_state: State<'_, Mutex<SessionItems>>) -> Result<(), String> {
+fn save_state(app_handle: tauri::AppHandle, state: State<'_, Mutex<AppProjectState>>, _session_state: State<'_, Mutex<SessionItems>>) -> Result<(), String> {
     let file_path = app_handle.dialog()
         .file()
         .add_filter("Replacer Project", &["tgrep"])
@@ -803,7 +874,7 @@ fn load_state(app_handle: tauri::AppHandle, state: State<'_, Mutex<AppProjectSta
 }
 
 #[tauri::command]
-fn play_selected(session_state: State<'_, Mutex<SessionItems>>, sound_state: State<'_, Mutex<AppSoundEngine>>) -> Result<(), String> {
+fn play_selected(session_state: State<'_, Mutex<SessionItems>>, sound_state: State<'_, Mutex<AppSoundEngine>>, sink: State<'_, Arc<Mutex<Sink>>>) -> Result<(), String> {
     let session_state = session_state.lock().unwrap();
     let mut sound_engine = sound_state.lock().unwrap();
 
@@ -824,16 +895,66 @@ fn play_selected(session_state: State<'_, Mutex<SessionItems>>, sound_state: Sta
                         sound.decoder()
                             .skip_duration(Duration::from_millis(max(0, (phones.xmin * 1000. - 300.) as u64)))
                             .take_duration(Duration::from_millis((300. + 600. + (phones.xmax - phones.xmin) * 1000.) as u64))
-                            .fade_in(Duration::from_millis(50))
-                        , Duration::from_millis(50)
+                            .fade_in(Duration::from_millis(50)),
+                        Duration::from_millis(50),
+                        Some(Duration::from_millis((300. + 600. + (phones.xmax - phones.xmin) * 1000.) as u64))
                     );
-                    sound_engine.sink.clear();
-                    sound_engine.sink.append(source);
-                    sound_engine.sink.play();
+
+                    let sink_clone = Arc::clone(&sink);
+                    let sink = sink_clone.lock().unwrap();
+                    sink.clear();
+                    sink.append(source);
+                    sink.play();
                 }
             }
         }
     }
+    Ok(())
+}
+
+#[tauri::command]
+fn list_audio_output_devices() -> Result<Vec<String>, String> {
+    let host = cpal::default_host();
+    let devices = cpal::default_host().output_devices().map_err(|e| e.to_string())?;
+    let default_device = host.default_output_device().unwrap();
+    let mut res = Vec::new();
+    for device in devices {
+        res.push(device.name().map_err(|e| e.to_string())?);
+    }
+    Ok(res)
+}
+
+#[tauri::command]
+fn select_audio_output_device(device_name: String, app: tauri::AppHandle, sink: State<'_, Arc<Mutex<Sink>>>, app_settings: State<'_, Mutex<AppSettings>>) -> Result<(), String> {
+    let device = cpal::default_host().output_devices().map_err(|e| e.to_string())?.find(|d| d.name().unwrap() == device_name).unwrap();
+    let (_stream, stream_handle) = OutputStream::try_from_device(&device).map_err(|e| e.to_string())?;
+    let sink_clone = Arc::clone(&sink);
+    let mut sink = sink_clone.lock().unwrap();
+    *sink = Sink::try_new(&stream_handle).map_err(|e| e.to_string()).unwrap();
+
+    let mut app_settings = app_settings.lock().unwrap();
+    app_settings.sound_device = Some(device_name);
+    let _ = app.emit("sync_settings", app_settings.clone()).unwrap();
+    let stores = app.state::<StoreCollection<Wry>>();
+    let _ = with_store(app.clone(), stores, PathBuf::from("settings.json"), |store| {
+        app_settings.save_to_store(store).unwrap();
+        Ok(())
+    });
+    Ok(())
+}
+
+#[tauri::command]
+fn test_output_device(sink: State<'_, Arc<Mutex<Sink>>>) -> Result<(), String> {
+    let sink_clone = Arc::clone(&sink);
+    let sink = sink_clone.lock().unwrap();
+    let source = fadeout(
+        SineWave::new(440.0).take_duration(Duration::from_secs_f32(0.9)).amplify(0.20).fade_in(Duration::from_secs_f32(0.2)),
+        Duration::from_secs_f32(0.2),
+        Some(Duration::from_secs_f32(0.9))
+    );
+    sink.clear();
+    sink.append(source);
+    sink.play();
     Ok(())
 }
 
@@ -861,8 +982,8 @@ impl Sound {
     }
 }
 
+#[derive(Default)]
 struct AppSoundEngine {
-    sink: Sink,
     decoded_file: PathBuf,
     source: Option<Sound>,
 }
@@ -870,33 +991,56 @@ struct AppSoundEngine {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let (_stream, stream_handle) = OutputStream::try_default().map_err(|e| e.to_string()).unwrap();
-    let sink = Sink::try_new(&stream_handle).map_err(|e| e.to_string()).unwrap();
-    let sound_engine = AppSoundEngine {
-        sink,
-        decoded_file: PathBuf::new(),
-        source: None,
-    };
+    let sink = Arc::new(Mutex::new(Sink::try_new(&stream_handle).map_err(|e| e.to_string()).unwrap()));
+    let sink_clone = Arc::clone(&sink);
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .plugin(tauri_plugin_persisted_scope::init())
+        // .plugin(tauri_plugin_persisted_scope::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
             println!("{}, {argv:?}, {cwd}", app.package_info().name);
             app.emit("single-instance", Payload { args: argv, cwd }).unwrap();
         }))
         .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(tauri_plugin_store::Builder::default().build())
+        .setup(move |app| {
+            let mut store = StoreBuilder::new("settings.json").build(app.handle().clone());
+            let _ = store.load();
+            let app_settings = AppSettings::load_from_store(&store);
+            match app_settings {
+                Ok(app_settings) => {
+                    match app_settings.sound_device {
+                        None => (),
+                        Some(ref device_name) => {
+                            let device = cpal::default_host().output_devices().map_err(|e| e.to_string())?.find(|d| d.name().unwrap() == *device_name).unwrap();
+                            let (_stream, stream_handle) = OutputStream::try_from_device(&device).map_err(|e| e.to_string())?;
+                            let mut sink = sink_clone.lock().unwrap();
+                            *sink = Sink::try_new(&stream_handle).map_err(|e| e.to_string()).unwrap();
+                        },
+                    };
+                    app.manage(Mutex::new(app_settings));
+                    Ok(())
+                },
+                Err(err) => {
+                    eprintln!("Error loading settings: {}", err);
+                    Err(err)
+                }
+            }
+        })
         .manage(Mutex::new(AppProjectState::default()))
         .manage(Mutex::new(SessionItems::default()))
-        .manage(Mutex::new(sound_engine))
+        .manage(Mutex::new(AppSoundEngine::default()))
+        .manage(Arc::clone(&sink))
         .invoke_handler(tauri::generate_handler![
             init_state, load_state, save_state, save_textgrids,
-            get_config_state, get_session_items,
+            get_config_state, get_session_items, get_app_settings,
             open_folder, list_items, play_selected,
             add_rule, rename_rule, remove_rule, select_rule,
             add_search_term, remove_search_term, rename_search_term, select_search_term,
             add_replace_option, remove_replace_option, rename_replace_option, select_replace_option,
-            prev_item, next_item, prev_mark, next_mark, select_item, select_mark, choose_a_replace_option
+            prev_item, next_item, prev_mark, next_mark, select_item, select_mark, choose_a_replace_option,
+            list_audio_output_devices, select_audio_output_device, test_output_device
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -144,11 +144,13 @@
 	async function choose_a_replace_option(optIndex) {
 		optButtonDisabled = true;
 		let payload = await invoke('choose_a_replace_option', { optIndex });
-		items.update(items => {
-			items[selectedItemIdx].selected_options = payload[0];
-			items[selectedItemIdx].dirty = payload[1];
-			return items
-		})
+		if (payload !== null) {
+			items.update(items => {
+				items[selectedItemIdx].selected_options = payload[0];
+				items[selectedItemIdx].dirty = payload[1];
+				return items
+			})
+		}
 		await invoke('next_mark');
 		await invoke('play_selected');
 		optButtonDisabled = false;
