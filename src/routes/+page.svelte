@@ -1,7 +1,7 @@
 <script>
     import { invoke } from '@tauri-apps/api/core';
     import { listen } from '@tauri-apps/api/event'
-	import ThemeSelect from '$lib/theme-select.svelte';
+	import { themes } from '$lib/themes';
 	import { writable } from 'svelte/store';
 	import { onMount } from 'svelte';
 
@@ -43,6 +43,13 @@
 	let currentTerm = $state("");
 	let currentOpt = $state("");
 	let optButtonDisabled = $state(false);
+	let currentTheme = $state("");
+	let soundDevice = $state("");
+	let defaultSoundDevice = "";
+	let soundDevices = writable([]);
+	let volumeFactor = $state(1.0);
+	let autoSave = $state(true);
+	let autoNext = $state(true);
 
     let editingRuleIndex = writable(-1);
     function handleRuleDoubleClick(index) {
@@ -128,18 +135,19 @@
 		}
 	})
 
-	// listen('sync_item_selected_options', (event) => {
-	// 	console.log('sync_item_selected_options', event.payload);
-	// 	if (event.payload !== null && event.payload !== undefined) {
-	// 		// selectedItemIdx = event.payload[0] !== null ? event.payload[0] : -1;
-	// 		// selectedMarkIdx = event.payload[1] !== null ? event.payload[1] : -1;
-	// 		items.update(items => {
-	// 			items[selectedItemIdx].selected_options = event.payload[2];
-	// 			items[selectedItemIdx].dirty = event.payload[3];
-	// 			return items
-	// 		})
-	// 	}
-	// })
+	listen('sync_settings', (event) => {
+		console.log('sync_settings', event.payload);
+		if (event.payload !== null && event.payload !== undefined) {
+			currentTheme = event.payload.theme;
+			document.documentElement.setAttribute('data-theme', currentTheme);
+			if (event.payload.sound_device !== null) {
+				soundDevice = event.payload.sound_device;
+			}
+			volumeFactor = event.payload.volume_factor;
+			autoNext = event.payload.auto_next;
+			autoSave = event.payload.auto_save;
+		}
+	})
 
 	async function choose_a_replace_option(optIndex) {
 		optButtonDisabled = true;
@@ -161,6 +169,24 @@
 		el.select();
 	}
 
+	function setTheme(event) {
+        const select = event.target;
+        const theme = select.value;
+        if (themes.includes(theme)) {
+			invoke('update_settings', {theme: currentTheme, volumeFactor, autoSave, autoNext});
+        }
+    }
+
+	function nextTheme() {
+		const index = themes.indexOf(currentTheme);
+		invoke('update_settings', {theme: themes[(index + 1) % themes.length], volumeFactor, autoSave, autoNext});
+	}
+
+	function prevTheme() {
+		const index = themes.indexOf(currentTheme);
+		invoke('update_settings', {theme: themes[(index - 1 + themes.length) % themes.length], volumeFactor, autoSave, autoNext});
+	}
+
 	onMount(async () => {
 		let payload = await invoke('get_config_state');
 		rules.update(_ => payload.rules)
@@ -176,6 +202,23 @@
 		if (payload2.selected_mark !== null) {
 			selectedMarkIdx = payload2.selected_mark[selectedItemIdx] !== null ? payload2.selected_mark[selectedItemIdx] : -1;
 		}
+
+		let payload3 = await invoke('get_app_settings');
+		currentTheme = payload3.theme;
+		document.documentElement.setAttribute('data-theme', currentTheme);
+		if (payload3.sound_device !== null) {
+			soundDevice = payload3.sound_device;
+		}
+		volumeFactor = payload3.volume_factor;
+		autoNext = payload3.auto_next;
+		autoSave = payload3.auto_save;
+
+		let payload4 = await invoke('list_audio_output_devices');
+		if (payload3.sound_device === null) {
+			soundDevice = payload4[0];
+		}
+		defaultSoundDevice = payload4[0];
+		soundDevices.update(_ => payload4[1]);
 	});
 </script>
 
@@ -191,14 +234,35 @@
                 <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
             </form> -->
 			<h1 class="font-bold text-2xl">Settings</h1>
-			<div class="mt-6">
-				<ThemeSelect />
-				<button class="btn">neutral</button>
-				<button class="btn btn-primary">primary</button>
-				<button class="btn btn-secondary">secondary</button>
-				<button class="btn btn-accent">accent</button>
-				<button class="btn btn-ghost">ghost</button>
-				<button class="btn btn-link">link</button>
+			<div class="mt-6 flex flex-col gap-4">
+				<div class="flex">
+					<select
+						value={currentTheme}
+						data-choose-theme
+						class="flex-1 select select-bordered select-primary w-full text-sm capitalize"
+						onchange={(e) => setTheme(e)}
+					>
+						{#each themes as theme}
+							<option value={theme} class="capitalize">{theme}</option>
+						{/each}
+					</select>
+					<div class="join ml-2">
+						<button class="join-item btn" onclick={prevTheme}>«</button>
+						<button class="join-item btn" onclick={nextTheme}>»</button>
+					</div>
+				</div>
+				<div class="flex">
+					<select
+						value={soundDevice}
+						class="flex-1 select select-bordered select-primary w-full text-sm capitalize"
+						onchange={(e) => invoke('select_audio_output_device', { deviceName: e.target.value })}
+					>
+						{#each $soundDevices as device}
+							<option value={device} class="capitalize {device === defaultSoundDevice ? 'bold' : ''}">{device}</option>
+						{/each}
+					</select>
+					<button class="ml-2 btn" onclick={() => invoke('test_output_device')}>Test</button>
+				</div>
 			</div>
 			<div class="modal-action">
 				<form method="dialog">
@@ -286,24 +350,24 @@
 		<div class="flex-grow p-4">
 			<div class="flex flex-col space-y-2 h-full">
 				<div class="flex w-full justify-center">
-					<button class="btn btn-primary flex-initial w-48" onclick={() => invoke('open_folder', { target: 'tg' })}>Open TextGrid Folder</button>
+					<button class="btn btn-outline flex-initial w-48" onclick={() => invoke('open_folder', { target: 'tg' })}>Open TextGrid Folder</button>
 					<span id="tg-folder-text" class="font-normal h-8 m-2 mx-2 px-2 leading-7 border-b-2 flex-1"
 						>{ tg_folder_path }</span
 					>
 				</div>
 				<div class="flex w-full justify-center">
-					<button class="btn btn-primary flex-initial w-48" onclick={() => invoke('open_folder', { target: 'wav' })}>Open WAV Folder</button>
+					<button class="btn btn-outline flex-initial w-48" onclick={() => invoke('open_folder', { target: 'wav' })}>Open WAV Folder</button>
 					<span id="wav-folder-text" class="font-normal h-8 m-2 mx-2 px-2 leading-7 border-b-2 flex-1"
 						>{ wav_folder_path }</span
 					>
 				</div>
 				<div class="flex w-full justify-center space-x-4">
 					<input id="rule-name-input" bind:value={currentRuleName} type="text" placeholder="Rule name" class="input input-sm input-bordered flex-1" />
-					<button class="btn btn-primary btn-sm flex-initial w-8" onclick={() => { invoke('add_rule', { ruleName: currentRuleName.trim() }); currentRuleName = ""; document.getElementById("rule-name-input").focus(); } }>+</button>
+					<button class="btn btn-sm flex-initial w-8" onclick={() => { invoke('add_rule', { ruleName: currentRuleName.trim() }); currentRuleName = ""; document.getElementById("rule-name-input").focus(); } }>+</button>
 					<input id="search-term-input" bind:value={currentTerm} type="text" placeholder="Find Phoneme" class="input input-sm input-bordered flex-1" />
-					<button class="btn btn-primary btn-sm flex-initial w-8" onclick={() => { invoke('add_search_term', { term: currentTerm.trim() }); currentTerm = ""; document.getElementById("search-term-input").focus(); } }>+</button>
+					<button class="btn btn-sm flex-initial w-8" onclick={() => { invoke('add_search_term', { term: currentTerm.trim() }); currentTerm = ""; document.getElementById("search-term-input").focus(); } }>+</button>
 					<input id="replace-opt-input" bind:value={currentOpt} type="text" placeholder="Replace Phoneme" class="input input-sm input-bordered flex-1" />
-					<button class="btn btn-primary btn-sm flex-initial w-8" onclick={() => { invoke('add_replace_option', { replaceOpt: currentOpt.trim() }); currentOpt = ""; document.getElementById("replace-opt-input").focus(); }}>+</button>
+					<button class="btn btn-sm flex-initial w-8" onclick={() => { invoke('add_replace_option', { replaceOpt: currentOpt.trim() }); currentOpt = ""; document.getElementById("replace-opt-input").focus(); }}>+</button>
 				</div>
 				<div class="flex w-full justify-center space-x-4">
 					<ul
