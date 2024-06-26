@@ -104,7 +104,6 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tauri-plugin-store",
  "tauri-plugin-window-state",
- "tokio",
 ]
 
 [[package]]
