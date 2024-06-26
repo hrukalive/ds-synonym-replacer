@@ -45,11 +45,12 @@
 	let optButtonDisabled = $state(false);
 	let currentTheme = $state("");
 	let soundDevice = $state("");
-	let defaultSoundDevice = "";
+	let defaultSoundDevice = $state("");
 	let soundDevices = writable([]);
 	let volumeFactor = $state(1.0);
 	let autoSave = $state(true);
 	let autoNext = $state(true);
+	let autoPlay = $state(true);
 
     let editingRuleIndex = writable(-1);
     function handleRuleDoubleClick(index) {
@@ -146,6 +147,7 @@
 			volumeFactor = event.payload.volume_factor;
 			autoNext = event.payload.auto_next;
 			autoSave = event.payload.auto_save;
+			autoPlay = event.payload.auto_play;
 		}
 	})
 
@@ -173,7 +175,7 @@
         const select = event.target;
         const theme = select.value;
         if (themes.includes(theme)) {
-			invoke('update_settings', {theme: currentTheme, volumeFactor, autoSave, autoNext});
+			invoke('update_settings', {theme: currentTheme, volumeFactor, autoSave, autoNext, autoPlay});
         }
     }
 
@@ -212,6 +214,7 @@
 		volumeFactor = payload3.volume_factor;
 		autoNext = payload3.auto_next;
 		autoSave = payload3.auto_save;
+		autoPlay = payload3.auto_play;
 
 		let payload4 = await invoke('list_audio_output_devices');
 		if (payload3.sound_device === null) {
@@ -236,6 +239,7 @@
 			<h1 class="font-bold text-2xl">Settings</h1>
 			<div class="mt-6 flex flex-col gap-4">
 				<div class="flex">
+					<span class="label-text">Theme</span>
 					<select
 						value={currentTheme}
 						data-choose-theme
@@ -252,6 +256,7 @@
 					</div>
 				</div>
 				<div class="flex">
+					<span class="label-text">Audio Device</span>
 					<select
 						value={soundDevice}
 						class="flex-1 select select-bordered select-primary w-full text-sm capitalize"
@@ -263,6 +268,58 @@
 					</select>
 					<button class="ml-2 btn" onclick={() => invoke('test_output_device')}>Test</button>
 				</div>
+				<div class="flex">
+					<div class="form-control flex-1">
+						<label class="label">
+							<span class="label-text">Volume</span>
+							<input
+								type="range"
+								min="0.1"
+								max="2.0"
+								step="0.1"
+								bind:value={volumeFactor}
+								class="range range-sm"
+								onmouseup={() => invoke('update_settings', {theme: currentTheme, volumeFactor, autoSave, autoNext, autoPlay})}
+							/>
+							<span class="label-text">{volumeFactor.toFixed(1)}</span>
+						</label>
+					</div>
+				</div>
+				<!-- <div class="grid grid-cols-3 gap-2"> -->
+					<div class="form-control">
+						<label class="label">
+							<span class="label-text">Auto-save</span>
+							<input
+								type="checkbox"
+								bind:checked={autoSave}
+								class="toggle toggle-primary"
+								onchange={() => invoke('update_settings', {theme: currentTheme, volumeFactor, autoSave, autoNext, autoPlay})}
+							/>
+						</label>
+					</div>
+					<div class="form-control">
+						<label class="label">
+							<span class="label-text">Auto-next</span>
+							<input
+								type="checkbox"
+								bind:checked={autoNext}
+								class="toggle toggle-primary"
+								onchange={() => invoke('update_settings', {theme: currentTheme, volumeFactor, autoSave, autoNext, autoPlay})}
+							/>
+						</label>
+					</div>
+					<div class="form-control">
+						<label class="label">
+							<span class="label-text">Auto-play</span>
+							<input
+								type="checkbox"
+								bind:checked={autoPlay}
+								class="toggle toggle-primary"
+								onchange={() => invoke('update_settings', {theme: currentTheme, volumeFactor, autoSave, autoNext, autoPlay})}
+							/>
+						</label>
+					</div>
+				<!-- </div> -->
 			</div>
 			<div class="modal-action">
 				<form method="dialog">
