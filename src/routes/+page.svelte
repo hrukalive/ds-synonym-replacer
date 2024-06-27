@@ -135,6 +135,15 @@
 				scrollIntoCenterView(selectedMarkIdx, markDiv);
 			}
 		}
+		if (selectedRuleIdx > -1) {
+			scrollIntoCenterView(selectedRuleIdx, ruleDiv);
+		}
+		if (selectedTermIdx > -1) {
+			scrollIntoCenterView(selectedTermIdx, termDiv);
+		}
+		if (selectedOptIdx > -1) {
+			scrollIntoCenterView(selectedOptIdx, optDiv);
+		}
 	}
 
 	function scrollIntoCenterView(idx, parent) {
@@ -155,7 +164,7 @@
 	});
 
 	listen('sync_app_state', (event) => {
-		console.log(event.payload);
+		console.log('sync_app_state', event.payload);
 		if (event.payload !== null && event.payload !== undefined) {
 			if (Array.isArray(event.payload.rules)) {
 				rules.update(_ => event.payload.rules)
@@ -165,21 +174,36 @@
 			selectedRuleIdx = event.payload.selected_rule_idx !== null ? event.payload.selected_rule_idx : -1;
 			selectedTermIdx = event.payload.selected_term_idx !== null ? event.payload.selected_term_idx : -1;
 			selectedOptIdx = event.payload.selected_opt_idx !== null ? event.payload.selected_opt_idx : -1;
+			setTimeout(() => {
+				if (selectedRuleIdx > -1) {
+					scrollIntoCenterView(selectedRuleIdx, ruleDiv);
+				}
+				if (selectedTermIdx > -1) {
+					scrollIntoCenterView(selectedTermIdx, termDiv);
+				}
+				if (selectedOptIdx > -1) {
+					scrollIntoCenterView(selectedOptIdx, optDiv);
+				}
+			}, 100);
 		}
 	})
 
 	listen('sync_session_state', (event) => {
-		console.log(event.payload);
+		console.log('sync_session_state', event.payload);
 		if (event.payload !== null && event.payload !== undefined) {
 			items.update(_ => event.payload.items)
 			selectedItemIdx = event.payload.selected_item !== null ? event.payload.selected_item : -1;
 			if (selectedItemIdx >= 0) {
 				selectedMarkIdx = event.payload.selected_mark[selectedItemIdx] !== null ? event.payload.selected_mark[selectedItemIdx] : -1;
-				scrollIntoCenterView(selectedItemIdx, itemDiv);
-				if (selectedMarkIdx > -1) {
-					scrollIntoCenterView(selectedMarkIdx, markDiv);
-				}
 			}
+			setTimeout(() => {
+				if (selectedItemIdx > -1) {
+					scrollIntoCenterView(selectedItemIdx, itemDiv);
+					if (selectedMarkIdx > -1) {
+						scrollIntoCenterView(selectedMarkIdx, markDiv);
+					}
+				}
+			}, 100);
 		}
 	})
 
@@ -189,6 +213,17 @@
 			selectedRuleIdx = event.payload[0] !== null ? event.payload[0] : -1;
 			selectedTermIdx = event.payload[1] !== null ? event.payload[1] : -1;
 			selectedOptIdx = event.payload[2] !== null ? event.payload[2] : -1;
+			if (autoScroll) {
+				if (selectedRuleIdx > -1) {
+					scrollIntoCenterView(selectedRuleIdx, ruleDiv);
+				}
+				if (selectedTermIdx > -1) {
+					scrollIntoCenterView(selectedTermIdx, termDiv);
+				}
+				if (selectedOptIdx > -1) {
+					scrollIntoCenterView(selectedOptIdx, optDiv);
+				}
+			}
 		}
 	})
 
@@ -292,12 +327,7 @@
 		soundDevices.update(_ => audio_devices[1]);
 
 		setTimeout(() => {
-			if (selectedItemIdx > -1) {
-				scrollIntoCenterView(selectedItemIdx, itemDiv);
-				if (selectedMarkIdx > -1) {
-					scrollIntoCenterView(selectedMarkIdx, markDiv);
-				}
-			}
+			recenter();
 		}, 100);
 	});
 </script>
@@ -452,7 +482,7 @@
 							class="menu menu-sm dropdown-content mt-3 z-[1] p-2 shadow bg-base-300 rounded-box w-52 transition-opacity"
 							style:visibility={isDropdownOpen ? 'visible' : 'hidden'}
 						>
-							<li><a onclick={() => invoke('init_state')}>New project</a></li>
+							<li><a onclick={() => invoke('init_state')} href="?#" role="button">New project</a></li>
 							<li><a onclick={() => invoke('load_state')}>Open project</a></li>
 							<li><a onclick={() => invoke('save_state')}>Save project</a></li>
 						</ul>
@@ -506,7 +536,7 @@
 						tabindex="-1"
 						class="shadow bg-base-200 rounded-box min-h-12 flex-1 px-2 py-2"
 					>
-						<div class="overflow-y-auto overflow-x-hidden min-h-24 max-h-24">
+						<div id="rule-list" bind:this={ruleDiv} class="overflow-y-auto overflow-x-hidden min-h-24 max-h-24">
 							{#each $rules as rule, ruleIndex}
 								<li class="group h-8">
 									<div class="flex h-full pl-0">
@@ -527,7 +557,7 @@
 						tabindex="-1"
 						class="shadow bg-base-200 rounded-box min-h-12 flex-1 px-2 py-2"
 					>
-						<div class="overflow-y-auto overflow-x-hidden min-h-24 max-h-24">
+						<div id="term-list" bind:this={termDiv} class="overflow-y-auto overflow-x-hidden min-h-24 max-h-24">
 							{#if selectedRuleIdx > -1}
 								{#each $rules[selectedRuleIdx].search_terms as term, termIndex}
 									<li class="group h-8">
@@ -550,7 +580,7 @@
 						tabindex="-1"
 						class="shadow bg-base-200 rounded-box min-h-12 flex-1 px-2 py-2"
 					>
-						<div class="overflow-y-auto overflow-x-hidden min-h-24 max-h-24">
+						<div id="opt-list" bind:this={optDiv} class="overflow-y-auto overflow-x-hidden min-h-24 max-h-24">
 							{#if selectedRuleIdx > -1}
 								{#each $rules[selectedRuleIdx].replace_options as opt, optIndex}
 									<li class="group h-8">
