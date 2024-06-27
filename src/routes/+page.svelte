@@ -48,7 +48,7 @@
 	let defaultSoundDevice = $state("");
 	let soundDevices = writable([]);
 	let volumeFactor = $state(1.0);
-	let autoSave = $state(true);
+	let autoBackup = $state(true);
 	let autoNext = $state(true);
 	let autoPlay = $state(true);
 
@@ -131,6 +131,15 @@
 	listen('sync_item_selection_state', (event) => {
 		console.log('sync_item_selection_state', event.payload);
 		if (event.payload !== null && event.payload !== undefined) {
+			if (event.payload[0] === null) {
+				event.payload[0] = -1;
+			}
+			if (event.payload[1] === null) {
+				event.payload[1] = -1;
+			}
+			if ((selectedItemIdx !== event.payload[0] || selectedMarkIdx !== event.payload[1]) && autoPlay) {
+				invoke('play_selected');
+			}
 			selectedItemIdx = event.payload[0] !== null ? event.payload[0] : -1;
 			selectedMarkIdx = event.payload[1] !== null ? event.payload[1] : -1;
 		}
@@ -145,10 +154,19 @@
 				soundDevice = event.payload.sound_device;
 			}
 			volumeFactor = event.payload.volume_factor;
+			autoBackup = event.payload.auto_backup;
 			autoNext = event.payload.auto_next;
-			autoSave = event.payload.auto_save;
 			autoPlay = event.payload.auto_play;
 		}
+	})
+
+	listen('save_textgrids_done', (event) => {
+		console.log('save_textgrids_done', event.payload);
+		loading_modal.close();
+	})
+	listen('list_item_done', (event) => {
+		console.log('list_item_done', event.payload);
+		loading_modal.close();
 	})
 
 	async function choose_a_replace_option(optIndex) {
@@ -161,8 +179,9 @@
 				return items
 			})
 		}
-		await invoke('next_mark');
-		await invoke('play_selected');
+		if (autoNext) {
+			await invoke('next_mark');
+		}
 		optButtonDisabled = false;
 	}
 
@@ -172,21 +191,20 @@
 	}
 
 	function setTheme(event) {
-        const select = event.target;
-        const theme = select.value;
+        const theme = event.target.value;
         if (themes.includes(theme)) {
-			invoke('update_settings', {theme: currentTheme, volumeFactor, autoSave, autoNext, autoPlay});
+			invoke('update_settings', {theme: currentTheme, volumeFactor, autoBackup, autoNext, autoPlay});
         }
     }
 
 	function nextTheme() {
 		const index = themes.indexOf(currentTheme);
-		invoke('update_settings', {theme: themes[(index + 1) % themes.length], volumeFactor, autoSave, autoNext});
+		invoke('update_settings', {theme: themes[(index + 1) % themes.length], volumeFactor, autoBackup, autoNext, autoPlay});
 	}
 
 	function prevTheme() {
 		const index = themes.indexOf(currentTheme);
-		invoke('update_settings', {theme: themes[(index - 1 + themes.length) % themes.length], volumeFactor, autoSave, autoNext});
+		invoke('update_settings', {theme: themes[(index - 1 + themes.length) % themes.length], volumeFactor, autoBackup, autoNext, autoPlay});
 	}
 
 	onMount(async () => {
@@ -212,8 +230,8 @@
 			soundDevice = payload3.sound_device;
 		}
 		volumeFactor = payload3.volume_factor;
+		autoBackup = payload3.auto_backup;
 		autoNext = payload3.auto_next;
-		autoSave = payload3.auto_save;
 		autoPlay = payload3.auto_play;
 
 		let payload4 = await invoke('list_audio_output_devices');
@@ -231,6 +249,11 @@
 </svelte:head>
 
 <section class="h-screen">
+	<dialog id="loading_modal" class="modal modal-bottom sm:modal-middle transition-all duration-300">
+		<div class="p-4 w-32 rounded-box shadow bg-white flex justify-center">
+			<div class="loading loading-infinity loading-lg place-self-center"></div>
+		</div>
+	</dialog>
 	<dialog id="setting_modal" class="modal modal-bottom sm:modal-middle">
 		<div class="modal-box">
 			<!-- <form method="dialog">
@@ -238,12 +261,12 @@
             </form> -->
 			<h1 class="font-bold text-2xl">Settings</h1>
 			<div class="mt-6 flex flex-col gap-4">
-				<div class="flex">
-					<span class="label-text">Theme</span>
+				<div class="grid grid-cols-5">
+					<span class="label">Theme</span>
 					<select
-						value={currentTheme}
+						bind:value={currentTheme}
 						data-choose-theme
-						class="flex-1 select select-bordered select-primary w-full text-sm capitalize"
+						class="col-span-3 select select-bordered select-primary w-full text-sm capitalize"
 						onchange={(e) => setTheme(e)}
 					>
 						{#each themes as theme}
@@ -255,71 +278,59 @@
 						<button class="join-item btn" onclick={nextTheme}>»</button>
 					</div>
 				</div>
-				<div class="flex">
-					<span class="label-text">Audio Device</span>
+				<div class="grid grid-cols-5">
+					<span class="label">Device</span>
 					<select
-						value={soundDevice}
-						class="flex-1 select select-bordered select-primary w-full text-sm capitalize"
+						bind:value={soundDevice}
+						class="col-span-3 select select-bordered select-primary w-full text-sm capitalize"
 						onchange={(e) => invoke('select_audio_output_device', { deviceName: e.target.value })}
 					>
 						{#each $soundDevices as device}
-							<option value={device} class="capitalize {device === defaultSoundDevice ? 'bold' : ''}">{device}</option>
+							<option value={device} class="capitalize">{(device === defaultSoundDevice ? '(Default) ' : '') + device}</option>
 						{/each}
 					</select>
 					<button class="ml-2 btn" onclick={() => invoke('test_output_device')}>Test</button>
 				</div>
-				<div class="flex">
-					<div class="form-control flex-1">
-						<label class="label">
-							<span class="label-text">Volume</span>
-							<input
-								type="range"
-								min="0.1"
-								max="2.0"
-								step="0.1"
-								bind:value={volumeFactor}
-								class="range range-sm"
-								onmouseup={() => invoke('update_settings', {theme: currentTheme, volumeFactor, autoSave, autoNext, autoPlay})}
-							/>
-							<span class="label-text">{volumeFactor.toFixed(1)}</span>
-						</label>
-					</div>
+				<div class="grid grid-cols-5 justify-center">
+					<span class="label">Volume</span>
+					<input
+						type="range"
+						min="0.1"
+						max="2.0"
+						step="0.1"
+						bind:value={volumeFactor}
+						class="col-span-3 range range-sm self-center"
+						onmouseup={() => invoke('update_settings', {theme: currentTheme, volumeFactor, autoBackup, autoNext, autoPlay})}
+					/>
+					<div class="badge badge-outline place-self-center">{volumeFactor.toFixed(1)}</div>
 				</div>
-				<!-- <div class="grid grid-cols-3 gap-2"> -->
-					<div class="form-control">
-						<label class="label">
-							<span class="label-text">Auto-save</span>
-							<input
-								type="checkbox"
-								bind:checked={autoSave}
-								class="toggle toggle-primary"
-								onchange={() => invoke('update_settings', {theme: currentTheme, volumeFactor, autoSave, autoNext, autoPlay})}
-							/>
-						</label>
-					</div>
-					<div class="form-control">
-						<label class="label">
-							<span class="label-text">Auto-next</span>
-							<input
-								type="checkbox"
-								bind:checked={autoNext}
-								class="toggle toggle-primary"
-								onchange={() => invoke('update_settings', {theme: currentTheme, volumeFactor, autoSave, autoNext, autoPlay})}
-							/>
-						</label>
-					</div>
-					<div class="form-control">
-						<label class="label">
-							<span class="label-text">Auto-play</span>
-							<input
-								type="checkbox"
-								bind:checked={autoPlay}
-								class="toggle toggle-primary"
-								onchange={() => invoke('update_settings', {theme: currentTheme, volumeFactor, autoSave, autoNext, autoPlay})}
-							/>
-						</label>
-					</div>
-				<!-- </div> -->
+				<div class="grid grid-cols-5">
+					<span class="label col-span-4">Auto backup</span>
+					<input
+						type="checkbox"
+						bind:checked={autoBackup}
+						class="toggle toggle-primary place-self-center"
+						onchange={() => invoke('update_settings', {theme: currentTheme, volumeFactor, autoBackup, autoNext, autoPlay})}
+					/>
+				</div>
+				<div class="grid grid-cols-5">
+					<span class="label col-span-4">Auto next</span>
+					<input
+						type="checkbox"
+						bind:checked={autoNext}
+						class="toggle toggle-primary place-self-center"
+						onchange={() => invoke('update_settings', {theme: currentTheme, volumeFactor, autoBackup, autoNext, autoPlay})}
+					/>
+				</div>
+				<div class="grid grid-cols-5">
+					<span class="label col-span-4">Auto play</span>
+					<input
+						type="checkbox"
+						bind:checked={autoPlay}
+						class="toggle toggle-primary place-self-center"
+						onchange={() => invoke('update_settings', {theme: currentTheme, volumeFactor, autoBackup, autoNext, autoPlay})}
+					/>
+				</div>
 			</div>
 			<div class="modal-action">
 				<form method="dialog">
@@ -384,7 +395,8 @@
 					</div>
 				</div>
 				<div class="navbar-center">
-					<a class="btn btn-ghost text-xl">Label Replacer</a>
+					<!-- <a class="btn btn-ghost text-xl">Label Replacer</a> -->
+					<h1 class="font-bold text-2xl">Label Replacer</h1>
 				</div>
 				<div class="navbar-end">
 					<button class="btn btn-square btn-ghost" onclick={() => setting_modal.showModal()}>
@@ -496,7 +508,7 @@
 					</ul>
 				</div>
 				<div class="flex w-full justify-center">
-					<button class="btn btn-secondary flex-1" onclick={() => invoke('list_items', { target: 'wav' })}>List</button>
+					<button class="btn btn-secondary flex-1" onclick={() => { loading_modal.showModal(); invoke('list_items', { target: 'wav' }); }}>List</button>
 				</div>
 				<div class="flex w-full justify-center">
 					<div class="grid grid-cols-8 gap-2 w-full justify-center">
@@ -510,7 +522,7 @@
 						</div>
 						<div class="col-span-3 gap-2 flex">
 							<button class="flex-1 btn btn-neutral btn-sm" onclick={() => invoke('play_selected')}>Play</button>
-							<button class="flex-1 btn btn-neutral btn-sm" onclick={() => invoke('save_textgrids')}>Save all</button>
+							<button class="flex-1 btn btn-neutral btn-sm" onclick={() => { loading_modal.showModal(); invoke('save_textgrids'); }}>Save all</button>
 						</div>
 					</div>
 				</div>

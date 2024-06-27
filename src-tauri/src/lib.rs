@@ -112,7 +112,7 @@ struct AppSettings {
     theme: String,
     sound_device: Option<String>,
     volume_factor: f32,
-    auto_save: bool,
+    auto_backup: bool,
     auto_next: bool,
     auto_play: bool,
 }
@@ -138,10 +138,10 @@ impl AppSettings {
             .map(|f| f as f32)
             .unwrap_or(1.0);
 
-        let auto_save = store
-            .get("appSettings.auto_save")
+        let auto_backup = store
+            .get("appSettings.auto_backup")
             .and_then(|v| v.as_bool())
-            .unwrap_or(true);
+            .unwrap_or(false);
 
         let auto_next = store
             .get("appSettings.auto_next")
@@ -157,7 +157,7 @@ impl AppSettings {
             theme,
             sound_device,
             volume_factor,
-            auto_save,
+            auto_backup,
             auto_next,
             auto_play,
         })
@@ -181,8 +181,8 @@ impl AppSettings {
             json.get("volume_factor").unwrap().clone(),
         )?;
         store.insert(
-            "appSettings.auto_save".to_string(),
-            json.get("auto_save").unwrap().clone(),
+            "appSettings.auto_backup".to_string(),
+            json.get("auto_backup").unwrap().clone(),
         )?;
         store.insert(
             "appSettings.auto_next".to_string(),
@@ -207,6 +207,7 @@ struct ItemRecord {
     found_mark_titles: Vec<String>,
     replace_options: Vec<String>,
     selected_options: Vec<Option<i32>>,
+    original_options: Vec<Option<i32>>,
     dirty: bool,
 }
 
@@ -903,7 +904,7 @@ fn choose_a_replace_option(
             let new_val = if opt_index > -1 { Some(opt_index) } else { None };
             if item.selected_options[mark_index as usize] != new_val {
                 item.selected_options[mark_index as usize] = new_val;
-                item.dirty = item.selected_options.iter().any(|x| x.is_some());
+                item.dirty = item.selected_options != item.original_options;
                 return Ok(Some((item.selected_options.clone(), item.dirty)));
             }
         }
@@ -928,13 +929,13 @@ fn get_app_settings(state: State<'_, Mutex<AppSettings>>) -> Result<AppSettings,
 #[tauri::command]
 fn open_folder(
     target: &str,
-    app_handle: tauri::AppHandle,
+    app: tauri::AppHandle,
     state: State<'_, Mutex<AppProjectState>>,
 ) -> Result<(), String> {
-    let folder_path = app_handle
+    let folder_path = app
         .dialog()
         .file()
-        .set_directory("G:\\Diffsinger\\datasets\\en\\AlemonEN_raw\\TextGrid")
+        .set_directory(app.path().document_dir().map_err(|e| e.to_string())?)
         .blocking_pick_folder();
     let mut proj_state = state.lock().map_err(|e| e.to_string())?;
     match folder_path {
@@ -958,7 +959,7 @@ fn open_folder(
                 }
                 _ => return Err("target can only be either tg or wav.".into()),
             }
-            let _ = app_handle.emit("sync_folder_state", (proj_state.tg_folder.clone(), proj_state.wav_folder.clone()));
+            let _ = app.emit("sync_folder_state", (proj_state.tg_folder.clone(), proj_state.wav_folder.clone()));
         }
         None => return Err("User did not select a folder.".into()),
     }
@@ -1026,6 +1027,7 @@ fn list_items(
                                         None
                                     },
                                     selected_options: vec![None; found_mark_idxs.len()],
+                                    original_options: vec![None; found_mark_idxs.len()],
                                     replace_options: active_rule.replace_options.clone(),
                                     found_mark_idxs,
                                     found_mark_titles,
@@ -1041,6 +1043,7 @@ fn list_items(
                 }
             }
             let _ = app.emit("sync_session_state", sess_state.clone());
+            let _ = app.emit("list_item_done", ());
             Ok(())
         }
         Err(_) => Err("Failed to read the directory".into()),
@@ -1049,15 +1052,16 @@ fn list_items(
 
 #[tauri::command]
 fn save_textgrids(
-    app_handle: tauri::AppHandle,
+    app: tauri::AppHandle,
     state: State<'_, Mutex<SessionItems>>,
+    app_settings: State<'_, Mutex<AppSettings>>,
 ) -> Result<(), String> {
     let mut sess_state = state.lock().map_err(|e| e.to_string())?;
+    let app_settings = app_settings.lock().map_err(|e| e.to_string())?;
     let mut resync = false;
     for item in sess_state.items.iter_mut() {
         if item.dirty {
             let opts = &item.replace_options;
-            // let _ = item.tg_file.clone().with_extension("textgrid").write_to(&item.tg_content);
             let mut new_tg = item.tg_content.clone();
             for (i, mark_idx) in item.found_mark_idxs.iter().enumerate() {
                 if let Some(opt_idx) = item.selected_options[i] {
@@ -1071,28 +1075,32 @@ fn save_textgrids(
                         .text = opts[opt_idx as usize].clone();
                 }
             }
-            let bak_path = item.tg_file.clone().with_extension("TextGrid.bak");
-            if !bak_path.exists() {
-                fs::copy(&item.tg_file, &bak_path).map_err(|e| e.to_string())?;
+            if app_settings.auto_backup {
+                let bak_path = item.tg_file.clone().with_extension("TextGrid.bak");
+                if !bak_path.exists() {
+                    fs::copy(&item.tg_file, &bak_path).map_err(|e| e.to_string())?;
+                }
             }
             let _ = fs::write(item.tg_file.clone(), textgrid_to_string(&new_tg))
                 .map_err(|e| e.to_string())
                 .and_then(|_| {
                     item.dirty = false;
+                    item.original_options = item.selected_options.clone();
                     resync = true;
                     Ok(())
                 });
         }
     }
     if resync {
-        let _ = app_handle.emit("sync_session_state", sess_state.clone());
+        let _ = app.emit("sync_session_state", sess_state.clone());
     }
+    let _ = app.emit("save_textgrids_done", ());
     Ok(())
 }
 
 #[tauri::command]
 fn init_state(
-    app_handle: tauri::AppHandle,
+    app: tauri::AppHandle,
     state: State<'_, Mutex<AppProjectState>>,
     session_state: State<'_, Mutex<SessionItems>>,
 ) -> Result<(), String> {
@@ -1100,17 +1108,17 @@ fn init_state(
     let mut sess_state = session_state.lock().map_err(|e| e.to_string())?;
     app_state.clone_from(&AppProjectState::default());
     sess_state.clone_from(&SessionItems::default());
-    let _ = app_handle.emit("sync_app_state", app_state.clone());
-    let _ = app_handle.emit("sync_session_state", sess_state.clone());
+    let _ = app.emit("sync_app_state", app_state.clone());
+    let _ = app.emit("sync_session_state", sess_state.clone());
     Ok(())
 }
 
 #[tauri::command]
 fn save_state(
-    app_handle: tauri::AppHandle,
+    app: tauri::AppHandle,
     state: State<'_, Mutex<AppProjectState>>,
 ) -> Result<(), String> {
-    let file_path = app_handle
+    let file_path = app
         .dialog()
         .file()
         .add_filter("Replacer Project", &["tgrep"])
@@ -1128,11 +1136,11 @@ fn save_state(
 
 #[tauri::command]
 fn load_state(
-    app_handle: tauri::AppHandle,
+    app: tauri::AppHandle,
     state: State<'_, Mutex<AppProjectState>>,
     session_state: State<'_, Mutex<SessionItems>>,
 ) -> Result<(), String> {
-    let file_path = app_handle
+    let file_path = app
         .dialog()
         .file()
         .add_filter("Replacer Project", &["tgrep"])
@@ -1146,8 +1154,8 @@ fn load_state(
             let mut session_state = session_state.lock().map_err(|e| e.to_string())?;
             *app_state = serde_json::from_str(&app_state_json).map_err(|e| e.to_string())?;
             *session_state = SessionItems::default();
-            let _ = app_handle.emit("sync_app_state", app_state.clone());
-            let _ = app_handle.emit("sync_session_state", session_state.clone());
+            let _ = app.emit("sync_app_state", app_state.clone());
+            let _ = app.emit("sync_session_state", session_state.clone());
             Ok(())
         }
         None => return Err("User did not select a file.".into()),
@@ -1224,7 +1232,7 @@ fn select_audio_output_device(
 fn update_settings(
     theme: String,
     volume_factor: f32,
-    auto_save: bool,
+    auto_backup: bool,
     auto_next: bool,
     auto_play: bool,
     app: tauri::AppHandle,
@@ -1233,7 +1241,7 @@ fn update_settings(
     let mut app_settings = app_settings.lock().map_err(|e| e.to_string())?;
     app_settings.theme = theme.clone();
     app_settings.volume_factor = volume_factor;
-    app_settings.auto_save = auto_save;
+    app_settings.auto_backup = auto_backup;
     app_settings.auto_next = auto_next;
     app_settings.auto_play = auto_play;
     let stores = app.state::<StoreCollection<Wry>>();
@@ -1294,6 +1302,7 @@ pub fn run() {
     thread::spawn(move || -> Result<(), String> {
         let mut decoded_file = PathBuf::new();
         let mut source: Option<Sound> = None;
+        let mut debounce_param = (PathBuf::new(), 0);
         let device = Mutex::new(cpal::default_host().default_output_device().unwrap());
         let (_stream, stream_handle) = OutputStream::try_from_device(&device.lock().unwrap())
             .map_err(|e| e.to_string())
@@ -1307,13 +1316,13 @@ pub fn run() {
         while let Ok(command) = rx.recv() {
             match command {
                 SoundCommand::ChangeDevice(device_name) => {
-                    let mut device_locked = device.lock().unwrap();
-                    *device_locked = cpal::default_host()
+                    let mut device = device.lock().unwrap();
+                    *device = cpal::default_host()
                         .output_devices()
                         .map_err(|e| e.to_string())?
                         .find(|d| d.name().unwrap() == *device_name)
                         .unwrap();
-                    let (_stream, stream_handle) = OutputStream::try_from_device(&device_locked)
+                    let (_stream, stream_handle) = OutputStream::try_from_device(&device)
                         .map_err(|e| e.to_string())
                         .unwrap();
                     *stream.lock().unwrap() = _stream;
@@ -1322,12 +1331,16 @@ pub fn run() {
                         .unwrap();
                 }
                 SoundCommand::Play(filename, start, dur, volume) => {
+                    let debounce_skip = debounce_param.0 == filename && debounce_param.1 == start;
                     if decoded_file.as_path() != filename.as_path() {
                         decoded_file = filename.clone();
                         source = Some(Sound::load(&decoded_file).map_err(|e| e.to_string())?);
                     }
                     if let Some(ref sound) = source {
-                        // Open the audio file
+                        let sink: std::sync::MutexGuard<Sink> = sink.lock().unwrap();
+                        if debounce_skip && !sink.empty() {
+                            continue;
+                        }
                         let source = fadeout(
                             sound
                                 .decoder()
@@ -1338,10 +1351,10 @@ pub fn run() {
                             Duration::from_millis(50),
                             Some(Duration::from_millis(dur)),
                         );
-                        let sink = sink.lock().unwrap();
                         sink.clear();
                         sink.append(source);
                         sink.play();
+                        debounce_param = (filename, start);
                     }
                 }
                 SoundCommand::TestOutputDevice => {
@@ -1366,7 +1379,6 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        // .plugin(tauri_plugin_persisted_scope::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
             println!("{}, {argv:?}, {cwd}", app.package_info().name);
