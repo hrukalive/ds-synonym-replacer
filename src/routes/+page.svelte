@@ -6,6 +6,32 @@
 	import { onMount } from 'svelte';
 
 	let isDropdownOpen = $state(false);
+
+	let tg_folder_path = $state('No folder selected.');
+	let wav_folder_path = $state('No folder selected.');
+
+	let rules = writable([]);
+	let items = writable([]);
+	let selectedRuleIdx = $state(-1);
+	let selectedTermIdx = $state(-1);
+	let selectedOptIdx = $state(-1);
+	let selectedItemIdx = $state(-1);
+	let selectedMarkIdx = $state(-1);
+
+	let currentRuleName = $state("");
+	let currentTerm = $state("");
+	let currentOpt = $state("");
+	let optButtonDisabled = $state(false);
+
+	let currentTheme = $state("");
+	let soundDevice = $state("");
+	let defaultSoundDevice = $state("");
+	let soundDevices = writable([]);
+	let volumeFactor = $state(1.0);
+	let autoBackup = $state(true);
+	let autoNext = $state(true);
+	let autoPlay = $state(true);
+
 	const handleDropdownClick = () => {
 		isDropdownOpen = !isDropdownOpen;
 	};
@@ -19,38 +45,6 @@
 			handleDropdownClick();
 		}
 	};
-
-	let tg_folder_path = $state('No folder selected.');
-	let wav_folder_path = $state('No folder selected.');
-
-	listen('sync_folder_state', (event) => {
-		if (Array.isArray(event.payload) && event.payload.length === 2) {
-			tg_folder_path = event.payload[0];
-			wav_folder_path = event.payload[1];
-		} else {
-			console.error('Invalid payload for sync_folder_state event');
-		}
-	});
-
-	let rules = writable([]);
-	let items = writable([]);
-	let selectedRuleIdx = $state(-1);
-	let selectedTermIdx = $state(-1);
-	let selectedOptIdx = $state(-1);
-	let selectedItemIdx = $state(-1);
-	let selectedMarkIdx = $state(-1);
-	let currentRuleName = $state("");
-	let currentTerm = $state("");
-	let currentOpt = $state("");
-	let optButtonDisabled = $state(false);
-	let currentTheme = $state("");
-	let soundDevice = $state("");
-	let defaultSoundDevice = $state("");
-	let soundDevices = writable([]);
-	let volumeFactor = $state(1.0);
-	let autoBackup = $state(true);
-	let autoNext = $state(true);
-	let autoPlay = $state(true);
 
     let editingRuleIndex = writable(-1);
     function handleRuleDoubleClick(index) {
@@ -93,6 +87,44 @@
 		}
 		return true;
 	}
+
+	function createAutoFocus(el) {
+		el.focus();
+		el.select();
+	}
+
+	function setTheme(event) {
+        const theme = event.target.value;
+        if (themes.includes(theme)) {
+			invoke('update_settings', {theme: currentTheme, volumeFactor, autoBackup, autoNext, autoPlay});
+        }
+    }
+
+	function nextTheme() {
+		const index = themes.indexOf(currentTheme);
+		invoke('update_settings', {theme: themes[(index + 1) % themes.length], volumeFactor, autoBackup, autoNext, autoPlay});
+	}
+
+	function prevTheme() {
+		const index = themes.indexOf(currentTheme);
+		invoke('update_settings', {theme: themes[(index - 1 + themes.length) % themes.length], volumeFactor, autoBackup, autoNext, autoPlay});
+	}
+
+	function selectMark(markIndex) {
+		invoke('select_mark', { markIndex })
+		if (autoPlay) {
+			invoke('play_selected');
+		}
+	}
+
+	listen('sync_folder_state', (event) => {
+		if (Array.isArray(event.payload) && event.payload.length === 2) {
+			tg_folder_path = event.payload[0];
+			wav_folder_path = event.payload[1];
+		} else {
+			console.error('Invalid payload for sync_folder_state event');
+		}
+	});
 
 	listen('sync_app_state', (event) => {
 		console.log(event.payload);
@@ -185,28 +217,6 @@
 		optButtonDisabled = false;
 	}
 
-	function createAutoFocus(el) {
-		el.focus();
-		el.select();
-	}
-
-	function setTheme(event) {
-        const theme = event.target.value;
-        if (themes.includes(theme)) {
-			invoke('update_settings', {theme: currentTheme, volumeFactor, autoBackup, autoNext, autoPlay});
-        }
-    }
-
-	function nextTheme() {
-		const index = themes.indexOf(currentTheme);
-		invoke('update_settings', {theme: themes[(index + 1) % themes.length], volumeFactor, autoBackup, autoNext, autoPlay});
-	}
-
-	function prevTheme() {
-		const index = themes.indexOf(currentTheme);
-		invoke('update_settings', {theme: themes[(index - 1 + themes.length) % themes.length], volumeFactor, autoBackup, autoNext, autoPlay});
-	}
-
 	onMount(async () => {
 		let payload = await invoke('get_config_state');
 		rules.update(_ => payload.rules)
@@ -244,8 +254,8 @@
 </script>
 
 <svelte:head>
-	<title>Home</title>
-	<meta name="description" content="Svelte demo app" />
+	<title>Label Replacer</title>
+	<meta name="description" content="Label Replacer by hrukalive" />
 </svelte:head>
 
 <section class="h-screen">
@@ -256,9 +266,6 @@
 	</dialog>
 	<dialog id="setting_modal" class="modal modal-bottom sm:modal-middle">
 		<div class="modal-box">
-			<!-- <form method="dialog">
-                <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
-            </form> -->
 			<h1 class="font-bold text-2xl">Settings</h1>
 			<div class="mt-6 flex flex-col gap-4">
 				<div class="grid grid-cols-5">
@@ -273,7 +280,7 @@
 							<option value={theme} class="capitalize">{theme}</option>
 						{/each}
 					</select>
-					<div class="join ml-2">
+					<div class="join ml-2 self-center place-self-center justify-center">
 						<button class="join-item btn" onclick={prevTheme}>«</button>
 						<button class="join-item btn" onclick={nextTheme}>»</button>
 					</div>
@@ -338,6 +345,9 @@
 				</form>
 			</div>
 		</div>
+		<form method="dialog" class="modal-backdrop">
+			<button class="cursor-default">close</button>
+		</form>
 	</dialog>
 	<div class="flex flex-col h-full">
 		<div>
@@ -395,7 +405,6 @@
 					</div>
 				</div>
 				<div class="navbar-center">
-					<!-- <a class="btn btn-ghost text-xl">Label Replacer</a> -->
 					<h1 class="font-bold text-2xl">Label Replacer</h1>
 				</div>
 				<div class="navbar-end">
@@ -528,10 +537,11 @@
 				</div>
 				<div class="flex-grow grid grid-cols-8 gap-2 w-full justify-center">
 					<ul
+						id="item-ul"
 						tabindex="-1"
 						class="shadow bg-base-200 rounded-box min-h-12 col-span-2 h-auto px-2 py-2"
 					>
-						<div class="overflow-y-auto overflow-x-hidden min-h-24 max-h-32">
+						<div id="item-list" class="overflow-y-auto overflow-x-hidden max-h-[calc(100vh-480px)]">
 							{#each $items as item, itemIndex}
 								<li class="group h-8">
 									<div class="flex h-full pl-0">
@@ -542,15 +552,16 @@
 						</div>
 					</ul>
 					<ul
+						id="mark-ul"
 						tabindex="-1"
 						class="shadow bg-base-200 rounded-box min-h-12 col-span-3 h-auto px-2 py-2"
 					>
-						<div class="overflow-y-auto overflow-x-hidden min-h-24 max-h-40">
+						<div id="mark-list" class="overflow-y-auto overflow-x-hidden min-h-24 max-h-40">
 							{#if selectedItemIdx > -1}
 								{#each $items[selectedItemIdx].found_mark_titles as mark, markIndex}
 									<li class="group h-8">
 										<div class="flex h-full pl-0">
-											<input type="radio" name="mark-selection" class="flex-1 btn btn-sm btn-block btn-ghost justify-start transition-all" bind:group="{selectedMarkIdx}" aria-label={mark} value={markIndex}  onclick={() => invoke('select_mark', { markIndex })}/>
+											<input type="radio" name="mark-selection" class="flex-1 btn btn-sm btn-block btn-ghost justify-start transition-all" bind:group="{selectedMarkIdx}" aria-label={mark} value={markIndex}  onclick={() => selectMark(markIndex)}/>
 										</div>
 									</li>
 								{/each}
