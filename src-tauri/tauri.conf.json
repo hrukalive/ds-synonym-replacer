@@ -14,6 +14,8 @@
         "title": "Label Replacer",
         "width": 912,
         "height": 650,
+        "minWidth": 912,
+        "minHeight": 650,
         "resizable": true,
         "fullscreen": false
       }

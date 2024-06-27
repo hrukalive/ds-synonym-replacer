@@ -31,6 +31,13 @@
 	let autoBackup = $state(true);
 	let autoNext = $state(true);
 	let autoPlay = $state(true);
+	let autoScroll = $state(true);
+
+	let ruleDiv = null;
+	let termDiv = null;
+	let optDiv = null;
+	let itemDiv = null;
+	let markDiv = null;
 
 	const handleDropdownClick = () => {
 		isDropdownOpen = !isDropdownOpen;
@@ -96,25 +103,46 @@
 	function setTheme(event) {
         const theme = event.target.value;
         if (themes.includes(theme)) {
-			invoke('update_settings', {theme: currentTheme, volumeFactor, autoBackup, autoNext, autoPlay});
+			invoke('update_settings', {theme: currentTheme, volumeFactor, autoBackup, autoNext, autoPlay, autoScroll});
         }
     }
 
 	function nextTheme() {
 		const index = themes.indexOf(currentTheme);
-		invoke('update_settings', {theme: themes[(index + 1) % themes.length], volumeFactor, autoBackup, autoNext, autoPlay});
+		invoke('update_settings', {theme: themes[(index + 1) % themes.length], volumeFactor, autoBackup, autoNext, autoPlay, autoScroll});
 	}
 
 	function prevTheme() {
 		const index = themes.indexOf(currentTheme);
-		invoke('update_settings', {theme: themes[(index - 1 + themes.length) % themes.length], volumeFactor, autoBackup, autoNext, autoPlay});
+		invoke('update_settings', {theme: themes[(index - 1 + themes.length) % themes.length], volumeFactor, autoBackup, autoNext, autoPlay, autoScroll});
+	}
+
+	function selectItem(itemIndex) {
+		invoke('select_item', { itemIndex });
 	}
 
 	function selectMark(markIndex) {
-		invoke('select_mark', { markIndex })
+		invoke('select_mark', { markIndex });
 		if (autoPlay) {
 			invoke('play_selected');
 		}
+	}
+
+	function recenter() {
+		if (selectedItemIdx > -1) {
+			scrollIntoCenterView(selectedItemIdx, itemDiv);
+			if (selectedMarkIdx > -1) {
+				scrollIntoCenterView(selectedMarkIdx, markDiv);
+			}
+		}
+	}
+
+	function scrollIntoCenterView(idx, parent) {
+		if (idx < 0 || !parent) return;
+
+		const parentRect = parent.getBoundingClientRect();
+		const scrollTop = idx * 32 - parentRect.height / 2 + 16;
+		parent.scrollTo({ top: scrollTop, behavior: 'smooth', block: 'center' });
 	}
 
 	listen('sync_folder_state', (event) => {
@@ -145,8 +173,12 @@
 		if (event.payload !== null && event.payload !== undefined) {
 			items.update(_ => event.payload.items)
 			selectedItemIdx = event.payload.selected_item !== null ? event.payload.selected_item : -1;
-			if (event.payload.selected_mark !== null) {
+			if (selectedItemIdx >= 0) {
 				selectedMarkIdx = event.payload.selected_mark[selectedItemIdx] !== null ? event.payload.selected_mark[selectedItemIdx] : -1;
+				scrollIntoCenterView(selectedItemIdx, itemDiv);
+				if (selectedMarkIdx > -1) {
+					scrollIntoCenterView(selectedMarkIdx, markDiv);
+				}
 			}
 		}
 	})
@@ -161,8 +193,8 @@
 	})
 
 	listen('sync_item_selection_state', (event) => {
-		console.log('sync_item_selection_state', event.payload);
 		if (event.payload !== null && event.payload !== undefined) {
+			console.log('sync_item_selection_state', event.payload);
 			if (event.payload[0] === null) {
 				event.payload[0] = -1;
 			}
@@ -172,8 +204,14 @@
 			if ((selectedItemIdx !== event.payload[0] || selectedMarkIdx !== event.payload[1]) && autoPlay) {
 				invoke('play_selected');
 			}
-			selectedItemIdx = event.payload[0] !== null ? event.payload[0] : -1;
-			selectedMarkIdx = event.payload[1] !== null ? event.payload[1] : -1;
+			selectedItemIdx = event.payload[0];
+			selectedMarkIdx = event.payload[1];
+			if (autoScroll && selectedItemIdx > -1) {
+				scrollIntoCenterView(selectedItemIdx, itemDiv);
+				if (selectedMarkIdx > -1) {
+					scrollIntoCenterView(selectedMarkIdx, markDiv);
+				}
+			}
 		}
 	})
 
@@ -189,6 +227,7 @@
 			autoBackup = event.payload.auto_backup;
 			autoNext = event.payload.auto_next;
 			autoPlay = event.payload.auto_play;
+			autoScroll = event.payload.auto_scroll;
 		}
 	})
 
@@ -218,38 +257,48 @@
 	}
 
 	onMount(async () => {
-		let payload = await invoke('get_config_state');
-		rules.update(_ => payload.rules)
-		tg_folder_path = payload.tg_folder !== null ? payload.tg_folder : "No Folder Selected.";
-		wav_folder_path = payload.wav_folder !== null ? payload.wav_folder : "No Folder Selected.";
-		selectedRuleIdx = payload.selected_rule_idx !== null ? payload.selected_rule_idx : -1;
-		selectedTermIdx = payload.selected_term_idx !== null ? payload.selected_term_idx : -1;
-		selectedOptIdx = payload.selected_opt_idx !== null ? payload.selected_opt_idx : -1;
+		let config_state = await invoke('get_config_state');
+		rules.update(_ => config_state.rules)
+		tg_folder_path = config_state.tg_folder !== null ? config_state.tg_folder : "No Folder Selected.";
+		wav_folder_path = config_state.wav_folder !== null ? config_state.wav_folder : "No Folder Selected.";
+		selectedRuleIdx = config_state.selected_rule_idx !== null ? config_state.selected_rule_idx : -1;
+		selectedTermIdx = config_state.selected_term_idx !== null ? config_state.selected_term_idx : -1;
+		selectedOptIdx = config_state.selected_opt_idx !== null ? config_state.selected_opt_idx : -1;
 
-		let payload2 = await invoke('get_session_items');
-		items.update(_ => payload2.items);
-		selectedItemIdx = payload2.selected_item !== null ? payload2.selected_item : -1;
-		if (payload2.selected_mark !== null) {
-			selectedMarkIdx = payload2.selected_mark[selectedItemIdx] !== null ? payload2.selected_mark[selectedItemIdx] : -1;
+		let session_items = await invoke('get_session_items');
+		items.update(_ => session_items.items);
+		selectedItemIdx = session_items.selected_item !== null ? session_items.selected_item : -1;
+		if (session_items.selected_mark !== null) {
+			selectedMarkIdx = session_items.selected_mark[selectedItemIdx] !== null ? session_items.selected_mark[selectedItemIdx] : -1;
 		}
 
-		let payload3 = await invoke('get_app_settings');
-		currentTheme = payload3.theme;
+		let app_settings = await invoke('get_app_settings');
+		currentTheme = app_settings.theme;
 		document.documentElement.setAttribute('data-theme', currentTheme);
-		if (payload3.sound_device !== null) {
-			soundDevice = payload3.sound_device;
+		if (app_settings.sound_device !== null) {
+			soundDevice = app_settings.sound_device;
 		}
-		volumeFactor = payload3.volume_factor;
-		autoBackup = payload3.auto_backup;
-		autoNext = payload3.auto_next;
-		autoPlay = payload3.auto_play;
+		volumeFactor = app_settings.volume_factor;
+		autoBackup = app_settings.auto_backup;
+		autoNext = app_settings.auto_next;
+		autoPlay = app_settings.auto_play;
+		autoScroll = app_settings.auto_scroll;
 
-		let payload4 = await invoke('list_audio_output_devices');
-		if (payload3.sound_device === null) {
-			soundDevice = payload4[0];
+		let audio_devices = await invoke('list_audio_output_devices');
+		if (app_settings.sound_device === null) {
+			soundDevice = audio_devices[0];
 		}
-		defaultSoundDevice = payload4[0];
-		soundDevices.update(_ => payload4[1]);
+		defaultSoundDevice = audio_devices[0];
+		soundDevices.update(_ => audio_devices[1]);
+
+		setTimeout(() => {
+			if (selectedItemIdx > -1) {
+				scrollIntoCenterView(selectedItemIdx, itemDiv);
+				if (selectedMarkIdx > -1) {
+					scrollIntoCenterView(selectedMarkIdx, markDiv);
+				}
+			}
+		}, 100);
 	});
 </script>
 
@@ -307,35 +356,40 @@
 						step="0.1"
 						bind:value={volumeFactor}
 						class="col-span-3 range range-sm self-center"
-						onmouseup={() => invoke('update_settings', {theme: currentTheme, volumeFactor, autoBackup, autoNext, autoPlay})}
+						onmouseup={() => invoke('update_settings', {theme: currentTheme, volumeFactor, autoBackup, autoNext, autoPlay, autoScroll})}
 					/>
 					<div class="badge badge-outline place-self-center">{volumeFactor.toFixed(1)}</div>
 				</div>
-				<div class="grid grid-cols-5">
-					<span class="label col-span-4">Auto backup</span>
+				<div class="grid grid-cols-10">
+					<span class="label col-span-3">Auto-backup</span>
 					<input
 						type="checkbox"
 						bind:checked={autoBackup}
-						class="toggle toggle-primary place-self-center"
-						onchange={() => invoke('update_settings', {theme: currentTheme, volumeFactor, autoBackup, autoNext, autoPlay})}
+						class="col-span-2 toggle toggle-primary place-self-center justify-self-start"
+						onchange={() => invoke('update_settings', {theme: currentTheme, volumeFactor, autoBackup, autoNext, autoPlay, autoScroll})}
 					/>
-				</div>
-				<div class="grid grid-cols-5">
-					<span class="label col-span-4">Auto next</span>
+					<span class="label col-start-7 col-span-2">Auto-next</span>
 					<input
 						type="checkbox"
 						bind:checked={autoNext}
-						class="toggle toggle-primary place-self-center"
-						onchange={() => invoke('update_settings', {theme: currentTheme, volumeFactor, autoBackup, autoNext, autoPlay})}
+						class="col-span-2 toggle toggle-primary place-self-center"
+						onchange={() => invoke('update_settings', {theme: currentTheme, volumeFactor, autoBackup, autoNext, autoPlay, autoScroll})}
 					/>
 				</div>
-				<div class="grid grid-cols-5">
-					<span class="label col-span-4">Auto play</span>
+				<div class="grid grid-cols-10">
+					<span class="label col-span-3">Auto-play</span>
 					<input
 						type="checkbox"
 						bind:checked={autoPlay}
-						class="toggle toggle-primary place-self-center"
-						onchange={() => invoke('update_settings', {theme: currentTheme, volumeFactor, autoBackup, autoNext, autoPlay})}
+						class="col-span-2 toggle toggle-primary place-self-center justify-self-start"
+						onchange={() => invoke('update_settings', {theme: currentTheme, volumeFactor, autoBackup, autoNext, autoPlay, autoScroll})}
+					/>
+					<span class="label col-start-7 col-span-2">Auto-scroll</span>
+					<input
+						type="checkbox"
+						bind:checked={autoScroll}
+						class="col-span-2 toggle toggle-primary place-self-center"
+						onchange={() => invoke('update_settings', {theme: currentTheme, volumeFactor, autoBackup, autoNext, autoPlay, autoScroll})}
 					/>
 				</div>
 			</div>
@@ -440,11 +494,11 @@
 					>
 				</div>
 				<div class="flex w-full justify-center space-x-4">
-					<input id="rule-name-input" bind:value={currentRuleName} type="text" placeholder="Rule name" class="input input-sm input-bordered flex-1" />
+					<input id="rule-name-input" bind:value={currentRuleName} type="text" placeholder="Rule name" class="input input-sm input-bordered flex-1" onkeydown={(e) => { if (e.key === "Enter") { invoke('add_rule', { ruleName: currentRuleName.trim() }); currentRuleName = ""; document.getElementById("rule-name-input").focus(); } }} />
 					<button class="btn btn-sm flex-initial w-8" onclick={() => { invoke('add_rule', { ruleName: currentRuleName.trim() }); currentRuleName = ""; document.getElementById("rule-name-input").focus(); } }>+</button>
-					<input id="search-term-input" bind:value={currentTerm} type="text" placeholder="Find Phoneme" class="input input-sm input-bordered flex-1" />
+					<input id="search-term-input" bind:value={currentTerm} type="text" placeholder="Find Phoneme" class="input input-sm input-bordered flex-1" onkeydown={(e) => { if (e.key === "Enter") { invoke('add_search_term', { term: currentTerm.trim() }); currentTerm = ""; document.getElementById("search-term-input").focus(); } }} />
 					<button class="btn btn-sm flex-initial w-8" onclick={() => { invoke('add_search_term', { term: currentTerm.trim() }); currentTerm = ""; document.getElementById("search-term-input").focus(); } }>+</button>
-					<input id="replace-opt-input" bind:value={currentOpt} type="text" placeholder="Replace Phoneme" class="input input-sm input-bordered flex-1" />
+					<input id="replace-opt-input" bind:value={currentOpt} type="text" placeholder="Replace Phoneme" class="input input-sm input-bordered flex-1" onkeydown={(e) => { if (e.key === "Enter") { invoke('add_replace_option', { replaceOpt: currentOpt.trim() }); currentOpt = ""; document.getElementById("replace-opt-input").focus(); } }} />
 					<button class="btn btn-sm flex-initial w-8" onclick={() => { invoke('add_replace_option', { replaceOpt: currentOpt.trim() }); currentOpt = ""; document.getElementById("replace-opt-input").focus(); }}>+</button>
 				</div>
 				<div class="flex w-full justify-center space-x-4">
@@ -460,7 +514,7 @@
 										{#if $editingRuleIndex === ruleIndex}
 											<input type="text" id={"ruleIdx"+ruleIndex} value={rule.rule_name} onkeydown={(e) => handleRuleBlur(e)} onblur={(e) => handleRuleBlur(e)} use:createAutoFocus class="input input-sm w-full transition-all" />
 										{:else}
-											<input type="radio" name="rule-selection" class="btn btn-sm btn-block btn-ghost justify-start transition-all" bind:group="{selectedRuleIdx}" aria-label={rule.rule_name} value={ruleIndex}  onclick={() => invoke('select_rule', { ruleIndex })}/>
+											<input type="radio" name="rule-selection" class="btn btn-sm btn-block btn-ghost justify-start transition-all" checked={selectedRuleIdx === ruleIndex} aria-label={rule.rule_name} value={ruleIndex}  onclick={() => invoke('select_rule', { ruleIndex })}/>
 										{/if}
 										</div>
 										<button class="hidden group-hover:inline-flex btn btn-ghost btn-circle btn-xs self-center" onclick={(e) => { invoke('remove_rule', { ruleIndex }) }}>✕</button>
@@ -482,7 +536,7 @@
 											{#if $editingTermIndex === termIndex}
 												<input type="text" id={"termIdx"+termIndex} value={term} onkeydown={(e) => handleTermBlur(e)} onblur={(e) => handleTermBlur(e)} use:createAutoFocus class="input input-sm w-full transition-all" />
 											{:else}
-												<input type="radio" name="term-selection" class="btn btn-sm btn-block btn-ghost justify-start transition-all" bind:group="{selectedTermIdx}" aria-label={term} value={termIndex}  onclick={() => invoke('select_search_term', { termIndex })}/>
+												<input type="radio" name="term-selection" class="btn btn-sm btn-block btn-ghost justify-start transition-all" checked={selectedTermIdx === termIndex} aria-label={term} value={termIndex}  onclick={() => invoke('select_search_term', { termIndex })}/>
 											{/if}
 											</div>
 											<button class="hidden group-hover:inline-flex btn btn-ghost btn-circle btn-xs self-center" onclick={(e) => { invoke('remove_search_term', { termIndex }) }}>✕</button>
@@ -505,7 +559,7 @@
 											{#if $editingOptIndex === optIndex}
 												<input type="text" id={"optIdx"+optIndex} value={opt} onkeydown={(e) => handleOptBlur(e)} onblur={(e) => handleOptBlur(e)} use:createAutoFocus class="input input-sm w-full transition-all" />
 											{:else}
-												<input type="radio" name="opt-selection" class="btn btn-sm btn-block btn-ghost justify-start transition-all" bind:group="{selectedOptIdx}" aria-label={opt} value={optIndex}  onclick={() => invoke('select_replace_option', { optIndex })}/>
+												<input type="radio" name="opt-selection" class="btn btn-sm btn-block btn-ghost justify-start transition-all" checked={selectedOptIdx === optIndex} aria-label={opt} value={optIndex} onclick={() => invoke('select_replace_option', { optIndex })}/>
 											{/if}
 											</div>
 											<button class="hidden group-hover:inline-flex btn btn-ghost btn-circle btn-xs self-center" onclick={(e) => { invoke('remove_replace_option', { optIndex }) }}>✕</button>
@@ -526,6 +580,7 @@
 							<button class="flex-1 btn btn-neutral btn-sm" onclick={() => invoke('next_item')}>Next</button>
 						</div>
 						<div class="col-span-3 gap-2 flex">
+							<button class="flex-1 btn btn-neutral btn-sm" onclick={() => recenter()}>Re-center</button>
 							<button class="flex-1 btn btn-neutral btn-sm" onclick={() => invoke('prev_mark')}>Previous</button>
 							<button class="flex-1 btn btn-neutral btn-sm" onclick={() => invoke('next_mark')}>Next</button>
 						</div>
@@ -541,11 +596,11 @@
 						tabindex="-1"
 						class="shadow bg-base-200 rounded-box min-h-12 col-span-2 h-auto px-2 py-2"
 					>
-						<div id="item-list" class="overflow-y-auto overflow-x-hidden max-h-[calc(100vh-480px)]">
+						<div id="item-list" bind:this={itemDiv} class="overflow-y-auto overflow-x-hidden max-h-[calc(100vh-480px)]">
 							{#each $items as item, itemIndex}
 								<li class="group h-8">
 									<div class="flex h-full pl-0">
-										<input type="radio" name="item-selection" class="flex-1 btn btn-sm btn-block btn-ghost justify-start transition-all" bind:group="{selectedItemIdx}" aria-label={`${item.dirty?"*":""}${item.tg_stem}`} value={itemIndex}  onclick={() => invoke('select_item', { itemIndex })}/>
+										<input type="radio" name="item-selection" class="flex-1 btn btn-sm btn-block btn-ghost justify-start transition-all" checked={selectedItemIdx === itemIndex} aria-label={`${item.dirty?"*":""}${item.tg_stem}`} value={itemIndex}  onclick={() => selectItem(itemIndex)}/>
 									</div>
 								</li>
 							{/each}
@@ -556,12 +611,12 @@
 						tabindex="-1"
 						class="shadow bg-base-200 rounded-box min-h-12 col-span-3 h-auto px-2 py-2"
 					>
-						<div id="mark-list" class="overflow-y-auto overflow-x-hidden min-h-24 max-h-40">
+						<div id="mark-list" bind:this={markDiv} class="overflow-y-auto overflow-x-hidden max-h-[calc(100vh-480px)]">
 							{#if selectedItemIdx > -1}
 								{#each $items[selectedItemIdx].found_mark_titles as mark, markIndex}
 									<li class="group h-8">
 										<div class="flex h-full pl-0">
-											<input type="radio" name="mark-selection" class="flex-1 btn btn-sm btn-block btn-ghost justify-start transition-all" bind:group="{selectedMarkIdx}" aria-label={mark} value={markIndex}  onclick={() => selectMark(markIndex)}/>
+											<input type="radio" name="mark-selection" class="flex-1 btn btn-sm btn-block btn-ghost justify-start transition-all" checked={selectedMarkIdx === markIndex} aria-label={mark} value={markIndex}  onclick={() => selectMark(markIndex)}/>
 										</div>
 									</li>
 								{/each}

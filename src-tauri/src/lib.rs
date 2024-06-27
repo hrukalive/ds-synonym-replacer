@@ -115,6 +115,7 @@ struct AppSettings {
     auto_backup: bool,
     auto_next: bool,
     auto_play: bool,
+    auto_scroll: bool,
 }
 
 impl AppSettings {
@@ -153,6 +154,11 @@ impl AppSettings {
             .and_then(|v| v.as_bool())
             .unwrap_or(true);
 
+        let auto_scroll = store
+            .get("appSettings.auto_scroll")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+
         Ok(AppSettings {
             theme,
             sound_device,
@@ -160,6 +166,7 @@ impl AppSettings {
             auto_backup,
             auto_next,
             auto_play,
+            auto_scroll,
         })
     }
 
@@ -191,6 +198,10 @@ impl AppSettings {
         store.insert(
             "appSettings.auto_play".to_string(),
             json.get("auto_play").unwrap().clone(),
+        )?;
+        store.insert(
+            "appSettings.auto_scroll".to_string(),
+            json.get("auto_scroll").unwrap().clone(),
         )?;
         store.save()?;
         Ok(())
@@ -1235,6 +1246,7 @@ fn update_settings(
     auto_backup: bool,
     auto_next: bool,
     auto_play: bool,
+    auto_scroll: bool,
     app: tauri::AppHandle,
     app_settings: State<'_, Mutex<AppSettings>>,
 ) -> Result<(), String> {
@@ -1244,6 +1256,7 @@ fn update_settings(
     app_settings.auto_backup = auto_backup;
     app_settings.auto_next = auto_next;
     app_settings.auto_play = auto_play;
+    app_settings.auto_scroll = auto_scroll;
     let stores = app.state::<StoreCollection<Wry>>();
     let _ = with_store(
         app.clone(),
