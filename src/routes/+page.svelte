@@ -1,6 +1,7 @@
 <script>
     import { invoke } from '@tauri-apps/api/core';
     import { listen } from '@tauri-apps/api/event'
+	import { open, save } from '@tauri-apps/plugin-dialog';
 	import { themes } from '$lib/themes';
 	import { writable } from 'svelte/store';
 	import { onMount } from 'svelte';
@@ -126,6 +127,53 @@
 		if (autoPlay) {
 			invoke('play_selected');
 		}
+	}
+
+	async function openFolder(target) {
+		const folderPath = await open({
+			multiple: false,
+			directory: true,
+			defaultPath: await invoke('get_default_paths')[1],
+		});
+		if (folderPath !== null) {
+			await invoke('open_folder', { folderPath, target });
+		}
+	}
+
+	async function initProject() {
+		await invoke('init_state');
+		isDropdownOpen = false;
+	}
+
+	async function loadProject() {
+		let filePath = await open({
+			multiple: false,
+			directory: false,
+			defaultPath: await invoke('get_default_paths')[1],
+			filters: [{
+				name: 'Replacer Project',
+				extensions: ['tgrep']
+			}]
+		});
+		console.log(filePath);
+		if (filePath !== null) {
+			await invoke('load_state', { filePath: filePath.path });
+		}
+		isDropdownOpen = false;
+	}
+
+	async function saveProject() {
+		let filePath = await save({
+			defaultPath: await invoke('get_default_paths')[1],
+			filters: [{
+				name: 'Replacer Project',
+				extensions: ['tgrep']
+			}]
+		});
+		if (filePath !== null) {
+			await invoke('save_state', { filePath });
+		}
+		isDropdownOpen = false;
 	}
 
 	function recenter() {
@@ -482,9 +530,9 @@
 							class="menu menu-sm dropdown-content mt-3 z-[1] p-2 shadow bg-base-300 rounded-box w-52 transition-opacity"
 							style:visibility={isDropdownOpen ? 'visible' : 'hidden'}
 						>
-							<li><a onclick={() => invoke('init_state')} href="?#" role="button">New project</a></li>
-							<li><a onclick={() => invoke('load_state')}>Open project</a></li>
-							<li><a onclick={() => invoke('save_state')}>Save project</a></li>
+							<li><button class="btn btn-sm btn-block btn-ghost font-normal justify-start" onclick={() => initProject()} onkeypress={(e) => e.key === 'Enter' && initProject()}>New project</button></li>
+							<li><button class="btn btn-sm btn-block btn-ghost font-normal justify-start" onclick={() => loadProject()} onkeypress={(e) => e.key === 'Enter' && loadProject()}>Open project</button></li>
+							<li><button class="btn btn-sm btn-block btn-ghost font-normal justify-start" onclick={() => saveProject()} onkeypress={(e) => e.key === 'Enter' && saveProject()}>Save project</button></li>
 						</ul>
 					</div>
 				</div>
@@ -512,13 +560,13 @@
 		<div class="flex-grow p-4">
 			<div class="flex flex-col space-y-2 h-full">
 				<div class="flex w-full justify-center">
-					<button class="btn btn-outline flex-initial w-48" onclick={() => invoke('open_folder', { target: 'tg' })}>Open TextGrid Folder</button>
+					<button class="btn btn-outline flex-initial w-48" onclick={() => openFolder('tg')}>Open TextGrid Folder</button>
 					<span id="tg-folder-text" class="font-normal h-8 m-2 mx-2 px-2 leading-7 border-b-2 flex-1"
 						>{ tg_folder_path }</span
 					>
 				</div>
 				<div class="flex w-full justify-center">
-					<button class="btn btn-outline flex-initial w-48" onclick={() => invoke('open_folder', { target: 'wav' })}>Open WAV Folder</button>
+					<button class="btn btn-outline flex-initial w-48" onclick={() => openFolder('wav')}>Open WAV Folder</button>
 					<span id="wav-folder-text" class="font-normal h-8 m-2 mx-2 px-2 leading-7 border-b-2 flex-1"
 						>{ wav_folder_path }</span
 					>
@@ -601,7 +649,7 @@
 					</ul>
 				</div>
 				<div class="flex w-full justify-center">
-					<button class="btn btn-secondary flex-1" onclick={() => { loading_modal.showModal(); invoke('list_items', { target: 'wav' }); }}>List</button>
+					<button class="btn btn-secondary flex-1" onclick={() => { loading_modal.showModal(); invoke('list_items', { target: 'wav' }).catch(() => loading_modal.close()); }}>List</button>
 				</div>
 				<div class="flex w-full justify-center">
 					<div class="grid grid-cols-8 gap-2 w-full justify-center">
@@ -616,7 +664,7 @@
 						</div>
 						<div class="col-span-3 gap-2 flex">
 							<button class="flex-1 btn btn-neutral btn-sm" onclick={() => invoke('play_selected')}>Play</button>
-							<button class="flex-1 btn btn-neutral btn-sm" onclick={() => { loading_modal.showModal(); invoke('save_textgrids'); }}>Save all</button>
+							<button class="flex-1 btn btn-neutral btn-sm" onclick={() => { loading_modal.showModal(); invoke('save_textgrids').catch(() => loading_modal.close()); }}>Save all</button>
 						</div>
 					</div>
 				</div>

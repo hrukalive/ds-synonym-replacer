@@ -19,7 +19,6 @@ use std::time::Duration;
 use std::{fs, io};
 use tauri::Wry;
 use tauri::{Manager, State};
-use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_fs;
 use tauri_plugin_store::{with_store, Store, StoreBuilder, StoreCollection};
 
@@ -938,42 +937,43 @@ fn get_app_settings(state: State<'_, Mutex<AppSettings>>) -> Result<AppSettings,
 }
 
 #[tauri::command]
+fn get_default_paths(app: tauri::AppHandle) -> Result<(PathBuf, PathBuf), String> {
+    Ok((app.path().desktop_dir().map_err(|e| e.to_string())?, app.path().document_dir().map_err(|e| e.to_string())?))
+}
+
+#[tauri::command]
 fn open_folder(
+    folder_path: PathBuf,
     target: &str,
     app: tauri::AppHandle,
     state: State<'_, Mutex<AppProjectState>>,
 ) -> Result<(), String> {
-    let folder_path = app
-        .dialog()
-        .file()
-        .set_directory(app.path().document_dir().map_err(|e| e.to_string())?)
-        .blocking_pick_folder();
+    // let folder_path = app
+    //     .dialog()
+    //     .file()
+    //     .set_directory(app.path().document_dir().map_err(|e| e.to_string())?)
+    //     .blocking_pick_folder();
     let mut proj_state = state.lock().map_err(|e| e.to_string())?;
-    match folder_path {
-        Some(path) => {
-            match target {
-                "tg" => {
-                    proj_state.tg_folder = Some(path.clone());
-                    if proj_state.wav_folder == None {
-                        if let Some(parent_path) = path.clone().parent() {
-                            proj_state.wav_folder = Some(parent_path.join("wav"));
-                        }
-                    }
+    match target {
+        "tg" => {
+            proj_state.tg_folder = Some(folder_path.clone());
+            if proj_state.wav_folder == None {
+                if let Some(parent_path) = folder_path.clone().parent() {
+                    proj_state.wav_folder = Some(parent_path.join("wav"));
                 }
-                "wav" => {
-                    proj_state.wav_folder = Some(path.clone());
-                    if proj_state.tg_folder == None {
-                        if let Some(parent_path) = path.clone().parent() {
-                            proj_state.tg_folder = Some(parent_path.join("TextGrid"));
-                        }
-                    }
-                }
-                _ => return Err("target can only be either tg or wav.".into()),
             }
-            let _ = app.emit("sync_folder_state", (proj_state.tg_folder.clone(), proj_state.wav_folder.clone()));
         }
-        None => return Err("User did not select a folder.".into()),
+        "wav" => {
+            proj_state.wav_folder = Some(folder_path.clone());
+            if proj_state.tg_folder == None {
+                if let Some(parent_path) = folder_path.clone().parent() {
+                    proj_state.tg_folder = Some(parent_path.join("TextGrid"));
+                }
+            }
+        }
+        _ => return Err("target can only be either tg or wav.".into()),
     }
+    let _ = app.emit("sync_folder_state", (proj_state.tg_folder.clone(), proj_state.wav_folder.clone()));
     Ok(())
 }
 
@@ -1126,51 +1126,32 @@ fn init_state(
 
 #[tauri::command]
 fn save_state(
-    app: tauri::AppHandle,
+    file_path: PathBuf,
     state: State<'_, Mutex<AppProjectState>>,
 ) -> Result<(), String> {
-    let file_path = app
-        .dialog()
-        .file()
-        .add_filter("Replacer Project", &["tgrep"])
-        .blocking_save_file();
-    match file_path {
-        Some(path) => {
-            let app_state = state.lock().map_err(|e| e.to_string())?;
-            let app_state_json = serde_json::to_string(&*app_state).map_err(|e| e.to_string())?;
-            fs::write(path, format!("{{\"app_state\": {}}}", app_state_json)).map_err(|e| e.to_string())?;
-            Ok(())
-        }
-        None => return Err("User did not select a file.".into()),
-    }
+    let app_state = state.lock().map_err(|e| e.to_string())?;
+    let app_state_json = serde_json::to_string(&*app_state).map_err(|e| e.to_string())?;
+    fs::write(file_path, format!("{{\"app_state\": {}}}", app_state_json)).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]
 fn load_state(
+    file_path: PathBuf,
     app: tauri::AppHandle,
     state: State<'_, Mutex<AppProjectState>>,
     session_state: State<'_, Mutex<SessionItems>>,
 ) -> Result<(), String> {
-    let file_path = app
-        .dialog()
-        .file()
-        .add_filter("Replacer Project", &["tgrep"])
-        .blocking_pick_file();
-    match file_path {
-        Some(pathres) => {
-            let file_contents = fs::read_to_string(&pathres.path).map_err(|e| e.to_string())?;
-            let json: serde_json::Value = serde_json::from_str(&file_contents).map_err(|e| e.to_string())?;
-            let app_state_json = json["app_state"].to_string();
-            let mut app_state = state.lock().map_err(|e| e.to_string())?;
-            let mut session_state = session_state.lock().map_err(|e| e.to_string())?;
-            *app_state = serde_json::from_str(&app_state_json).map_err(|e| e.to_string())?;
-            *session_state = SessionItems::default();
-            let _ = app.emit("sync_app_state", app_state.clone());
-            let _ = app.emit("sync_session_state", session_state.clone());
-            Ok(())
-        }
-        None => return Err("User did not select a file.".into()),
-    }
+    let file_contents = fs::read_to_string(file_path).map_err(|e| e.to_string())?;
+    let json: serde_json::Value = serde_json::from_str(&file_contents).map_err(|e| e.to_string())?;
+    let app_state_json = json["app_state"].to_string();
+    let mut app_state = state.lock().map_err(|e| e.to_string())?;
+    let mut session_state = session_state.lock().map_err(|e| e.to_string())?;
+    *app_state = serde_json::from_str(&app_state_json).map_err(|e| e.to_string())?;
+    *session_state = SessionItems::default();
+    let _ = app.emit("sync_app_state", app_state.clone());
+    let _ = app.emit("sync_session_state", session_state.clone());
+    Ok(())
 }
 
 #[tauri::command]
@@ -1431,6 +1412,7 @@ pub fn run() {
             get_config_state,
             get_session_items,
             get_app_settings,
+            get_default_paths,
             open_folder,
             list_items,
             play_selected,
