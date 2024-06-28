@@ -13,6 +13,7 @@
 
 	let rules = writable([]);
 	let items = writable([]);
+	let item_len = $state(0);
 	let selectedRuleIdx = $state(-1);
 	let selectedTermIdx = $state(-1);
 	let selectedOptIdx = $state(-1);
@@ -240,6 +241,7 @@
 		console.log('sync_session_state', event.payload);
 		if (event.payload !== null && event.payload !== undefined) {
 			items.update(_ => event.payload.items)
+			item_len = event.payload.items.length;
 			selectedItemIdx = event.payload.selected_item !== null ? event.payload.selected_item : -1;
 			if (selectedItemIdx >= 0) {
 				selectedMarkIdx = event.payload.selected_mark[selectedItemIdx] !== null ? event.payload.selected_mark[selectedItemIdx] : -1;
@@ -350,6 +352,7 @@
 
 		let session_items = await invoke('get_session_items');
 		items.update(_ => session_items.items);
+		item_len = session_items.items.length;
 		selectedItemIdx = session_items.selected_item !== null ? session_items.selected_item : -1;
 		if (session_items.selected_mark !== null) {
 			selectedMarkIdx = session_items.selected_mark[selectedItemIdx] !== null ? session_items.selected_mark[selectedItemIdx] : -1;
@@ -665,6 +668,7 @@
 						<div class="col-span-3 gap-2 flex">
 							<button class="flex-1 btn btn-neutral btn-sm" onclick={() => invoke('play_selected')}>Play</button>
 							<button class="flex-1 btn btn-neutral btn-sm" onclick={() => { loading_modal.showModal(); invoke('save_textgrids').catch(() => loading_modal.close()); }}>Save all</button>
+							<div class="badge badge-outline place-self-center">{`${selectedItemIdx > -1 && item_len > 0 ? (selectedItemIdx + 1) + "/" + item_len : "N/A"}`}</div>
 						</div>
 					</div>
 				</div>
