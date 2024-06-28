@@ -6,6 +6,34 @@
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         %sveltekit.head%
     </head>
+    <script>
+        function disableMenu() {
+            if (window.location.hostname !== 'tauri.localhost') {
+                return;
+            }
+            document.addEventListener('contextmenu', e => {
+                e.preventDefault();
+                return false;
+            }, { capture: true });
+            document.addEventListener('selectstart', e => {
+                e.preventDefault();
+                return false;
+            }, { capture: true });
+            document.addEventListener('keydown', e => {
+                if (
+                    e.altKey || e.key === 'F1' || e.key === 'F2' || e.key === 'F3' || e.key === 'F4'
+                    || e.key === 'F5' || e.key === 'F6' || e.key === 'F7' || e.key === 'F8'
+                    || e.key === 'F9' || e.key === 'F10' || e.key === 'F11' || e.key === 'F12'
+                ) {
+                    e.preventDefault();
+                }
+                if (e.ctrlKey && !(e.keyCode === 65 || e.keyCode === 67 || e.keyCode === 86 || e.keyCode === 88)) {
+                    e.preventDefault();
+                }
+            }, { capture: true });
+        }
+        disableMenu();
+    </script>
     <body data-sveltekit-preload-data="hover">
         <div style="display: contents">%sveltekit.body%</div>
     </body>

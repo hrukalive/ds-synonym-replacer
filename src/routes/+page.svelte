@@ -156,7 +156,7 @@
 				extensions: ['tgrep']
 			}]
 		});
-		console.log(filePath);
+		// console.log(filePath);
 		if (filePath !== null) {
 			await invoke('load_state', { filePath: filePath.path });
 		}
@@ -213,7 +213,7 @@
 	});
 
 	listen('sync_app_state', (event) => {
-		console.log('sync_app_state', event.payload);
+		// console.log('sync_app_state', event.payload);
 		if (event.payload !== null && event.payload !== undefined) {
 			if (Array.isArray(event.payload.rules)) {
 				rules.update(_ => event.payload.rules)
@@ -238,7 +238,7 @@
 	})
 
 	listen('sync_session_state', (event) => {
-		console.log('sync_session_state', event.payload);
+		// console.log('sync_session_state', event.payload);
 		if (event.payload !== null && event.payload !== undefined) {
 			items.update(_ => event.payload.items)
 			item_len = event.payload.items.length;
@@ -258,7 +258,7 @@
 	})
 
 	listen('sync_app_selection_state', (event) => {
-		console.log('sync_app_selection_state', event.payload);
+		// console.log('sync_app_selection_state', event.payload);
 		if (event.payload !== null && event.payload !== undefined) {
 			selectedRuleIdx = event.payload[0] !== null ? event.payload[0] : -1;
 			selectedTermIdx = event.payload[1] !== null ? event.payload[1] : -1;
@@ -279,7 +279,7 @@
 
 	listen('sync_item_selection_state', (event) => {
 		if (event.payload !== null && event.payload !== undefined) {
-			console.log('sync_item_selection_state', event.payload);
+			// console.log('sync_item_selection_state', event.payload);
 			if (event.payload[0] === null) {
 				event.payload[0] = -1;
 			}
@@ -301,7 +301,7 @@
 	})
 
 	listen('sync_settings', (event) => {
-		console.log('sync_settings', event.payload);
+		// console.log('sync_settings', event.payload);
 		if (event.payload !== null && event.payload !== undefined) {
 			currentTheme = event.payload.theme;
 			document.documentElement.setAttribute('data-theme', currentTheme);
@@ -317,11 +317,11 @@
 	})
 
 	listen('save_textgrids_done', (event) => {
-		console.log('save_textgrids_done', event.payload);
+		// console.log('save_textgrids_done', event.payload);
 		loading_modal.close();
 	})
 	listen('list_item_done', (event) => {
-		console.log('list_item_done', event.payload);
+		// console.log('list_item_done', event.payload);
 		loading_modal.close();
 	})
 
@@ -595,7 +595,7 @@
 										{#if $editingRuleIndex === ruleIndex}
 											<input type="text" id={"ruleIdx"+ruleIndex} value={rule.rule_name} onkeydown={(e) => handleRuleBlur(e)} onblur={(e) => handleRuleBlur(e)} use:createAutoFocus class="input input-sm w-full transition-all" />
 										{:else}
-											<input type="radio" name="rule-selection" class="btn btn-sm btn-block btn-ghost justify-start transition-all" checked={selectedRuleIdx === ruleIndex} aria-label={rule.rule_name} value={ruleIndex}  onclick={() => invoke('select_rule', { ruleIndex })}/>
+											<input type="radio" name="rule-selection" class="btn btn-sm btn-block btn-ghost justify-start transition-all" checked={selectedRuleIdx === ruleIndex} aria-label={`(${rule.term_seq_length}) ${rule.rule_name}`} value={ruleIndex}  onclick={() => invoke('select_rule', { ruleIndex })}/>
 										{/if}
 										</div>
 										<button class="hidden group-hover:inline-flex btn btn-ghost btn-circle btn-xs self-center" onclick={(e) => { invoke('remove_rule', { ruleIndex }) }}>✕</button>

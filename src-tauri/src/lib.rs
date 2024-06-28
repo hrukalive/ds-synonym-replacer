@@ -19,7 +19,7 @@ use std::time::Duration;
 use std::{fs, io};
 use tauri::Wry;
 use tauri::{Manager, State};
-use tauri_plugin_fs;
+// use tauri_plugin_fs;
 use tauri_plugin_store::{with_store, Store, StoreBuilder, StoreCollection};
 
 #[derive(Clone, serde::Serialize)]
@@ -92,6 +92,7 @@ fn textgrid_to_string(tg: &TextGrid) -> String {
 #[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 struct ReplaceRule {
     rule_name: String,
+    term_seq_length: usize,
     search_terms: Vec<String>,
     replace_options: Vec<String>,
 }
@@ -406,36 +407,42 @@ fn parse_textgrid(tg_file: PathBuf) -> Result<TextGrid, String> {
 fn find_marks(rule: &ReplaceRule, tg: &TextGrid) -> (Vec<usize>, Vec<String>) {
     let mut found_mark_idxs = Vec::new();
     let mut found_mark_titles = Vec::new();
-    let find_word_set = rule.search_terms.iter().collect::<HashSet<_>>();
     let tg_words = &tg.items.get(0).unwrap().intervals;
     let tg_phones = &tg.items.get(1).unwrap().intervals;
     let mut corr_words = Vec::new();
     let mut i = 0;
-    for word in tg_words.iter() {
+    for (w_i, word) in tg_words.iter().enumerate() {
         while i < tg_phones.len() {
             if (word.xmax.min(tg_phones[i].xmax) - word.xmin.max(tg_phones[i].xmin)) / (tg_phones[i].xmax - tg_phones[i].xmin) > 0.8 {
-                corr_words.push(word.text.clone());
+                corr_words.push((w_i, word.text.clone()));
                 i += 1;
             } else {
                 break;
             }
         }
     }
-    for (i, item) in tg_phones.iter().enumerate() {
-        if find_word_set.contains(&item.text) {
-            found_mark_idxs.push(i);
-            let mut title = String::new();
-            if corr_words.len() == tg_phones.len() {
-                title.push_str(format!("({}) ", &corr_words[i]).as_str());
+    if rule.term_seq_length >= 1 {
+        let find_word_tuple_set: HashSet<Vec<String>> = rule.search_terms.iter().map(|s| s.split_whitespace().map(String::from).collect()).collect();
+        if tg_phones.len() >= rule.term_seq_length {
+            for (i, item_win) in tg_phones.windows(rule.term_seq_length).enumerate() {
+                if find_word_tuple_set.contains(&item_win.iter().map(|s| s.text.clone()).collect::<Vec<String>>()) {
+                    found_mark_idxs.push(i);
+                    let mut title = String::new();
+                    if corr_words.len() == tg_phones.len() {
+                        let mut rel_words: Vec<(usize, String)> = corr_words[i..i + rule.term_seq_length].to_vec();
+                        rel_words.dedup_by_key(|x| x.0);
+                        title.push_str(format!("({}) ", rel_words.iter().map(|w| w.1.clone()).collect::<Vec<String>>().join(" ")).as_str());
+                    }
+                    for j in max(0, i as i32 - 2) as usize..i {
+                        title.push_str((tg_phones[j].text.clone() + " ").as_str());
+                    }
+                    title.push_str(format!("[{}] ", tg_phones[i..i + rule.term_seq_length].iter().map(|w| w.text.clone()).collect::<Vec<String>>().join(" ")).as_str());
+                    for j in min(i + rule.term_seq_length, tg_phones.len() - 1)..min(i + rule.term_seq_length + 2, tg_phones.len()) {
+                        title.push_str((tg_phones[j].text.clone() + " ").as_str());
+                    }
+                    found_mark_titles.push(title.trim().to_string());
+                }
             }
-            for j in max(0, i as i32 - 2) as usize..i {
-                title.push_str((tg_phones[j].text.clone() + " ").as_str());
-            }
-            title.push_str(format!("[{}] ", &tg_phones[i].text.clone()).as_str());
-            for j in min(i + 1, tg_phones.len() - 1)..min(i + 3, tg_phones.len()) {
-                title.push_str((tg_phones[j].text.clone() + " ").as_str());
-            }
-            found_mark_titles.push(title.trim().to_string());
         }
     }
     (found_mark_idxs, found_mark_titles)
@@ -451,15 +458,28 @@ fn add_rule(
         return Ok(());
     }
     let mut proj_state = state.lock().map_err(|e| e.to_string())?;
+    let name_vec: Vec<&str> = rule_name.split(",").collect();
+    let name: String;
+    let seq_len: usize;
+    if name_vec.len() == 2 {
+        name = name_vec[0].trim().to_string();
+        seq_len = name_vec[1].trim().parse::<usize>().map_err(|e| e.to_string())?;
+        if seq_len == 0 {
+            return Err("Sequence length must be greater than 0".to_string());
+        }
+    } else {
+        name = rule_name;
+        seq_len = 1;
+    }
     if proj_state
         .rules
         .iter()
-        .any(|rule| rule.rule_name == rule_name)
+        .any(|rule| rule.rule_name == name)
     {
         let selected_rule = proj_state
             .rules
             .iter()
-            .position(|rule| rule.rule_name == rule_name)
+            .position(|rule| rule.rule_name == name)
             .unwrap();
         if proj_state.selected_rule_idx != Some(selected_rule as i32) {
             proj_state.selected_rule_idx = Some(selected_rule as i32);
@@ -469,7 +489,8 @@ fn add_rule(
         }
     } else {
         proj_state.rules.push(ReplaceRule {
-            rule_name,
+            rule_name: name,
+            term_seq_length: seq_len,
             search_terms: Vec::new().into_iter().collect(),
             replace_options: Vec::new(),
         });
@@ -488,8 +509,8 @@ fn rename_rule(
     app: tauri::AppHandle,
     state: State<'_, Mutex<AppProjectState>>,
 ) -> Result<(), String> {
-    if new_name.trim().is_empty() {
-        return Ok(());
+    if new_name.trim().is_empty() || new_name.contains(",") {
+        return Err("Invalid rule name".into());
     }
     let mut proj_state = state.lock().map_err(|e| e.to_string())?;
     if rule_index >= 0
@@ -563,15 +584,21 @@ fn add_search_term(
     }
     let mut proj_state = state.lock().map_err(|e| e.to_string())?;
     if let Some(rule_index) = proj_state.selected_rule_idx {
+        let term_seq_length = proj_state.rules[rule_index as usize].term_seq_length;
         let search_terms = &mut proj_state
             .rules
             .get_mut(rule_index as usize)
             .unwrap()
             .search_terms;
+        let term_vec: Vec<&str> = term.split_whitespace().map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+        let term = term_vec.join(" ");
         if search_terms.iter().any(|w| w == &term) {
             proj_state.selected_term_idx = Some(search_terms.iter().position(|w| w == &term).unwrap() as i32);
             let _ = app.emit("sync_app_selection_state", (proj_state.selected_rule_idx, proj_state.selected_term_idx, proj_state.selected_opt_idx));
         } else {
+            if term_vec.len() != term_seq_length {
+                return Err("Invalid search term".into());
+            }
             search_terms.push(term);
             proj_state.selected_term_idx = Some(search_terms.len() as i32 - 1);
             let _ = app.emit("sync_app_state", proj_state.clone());
@@ -628,13 +655,17 @@ fn rename_search_term(
     }
     let mut proj_state = state.lock().map_err(|e| e.to_string())?;
     if let Some(rule_index) = proj_state.selected_rule_idx {
+        let term_seq_length = proj_state.rules[rule_index as usize].term_seq_length;
         let search_terms = &mut proj_state
             .rules
             .get_mut(rule_index as usize)
             .unwrap()
             .search_terms;
+        let term_vec: Vec<&str> = new_term.split_whitespace().map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+        let new_term = term_vec.join(" ");
         if term_index >= 0
             && term_index < search_terms.len() as i32
+            && term_vec.len() == term_seq_length
             && !search_terms.iter().any(|w| w == &new_term)
         {
             search_terms[term_index as usize] = new_term;
@@ -677,20 +708,21 @@ fn add_replace_option(
     }
     let mut proj_state = state.lock().map_err(|e| e.to_string())?;
     if let Some(rule_index) = proj_state.selected_rule_idx {
+        let term_seq_length = proj_state.rules[rule_index as usize].term_seq_length;
         let replace_options = &mut proj_state
             .rules
             .get_mut(rule_index as usize)
             .unwrap()
             .replace_options;
+        let opt_vec: Vec<&str> = replace_opt.split_whitespace().map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+        let replace_opt = opt_vec.join(" ");
         if replace_options.iter().any(|w| w == &replace_opt) {
-            proj_state.selected_opt_idx = Some(
-                replace_options
-                    .iter()
-                    .position(|w| w == &replace_opt)
-                    .unwrap() as i32,
-            );
+            proj_state.selected_opt_idx = Some(replace_options.iter().position(|w| w == &replace_opt).unwrap() as i32);
             let _ = app.emit("sync_app_selection_state", (proj_state.selected_rule_idx, proj_state.selected_term_idx, proj_state.selected_opt_idx));
         } else {
+            if opt_vec.len() != term_seq_length {
+                return Err("Invalid search term".into());
+            }
             replace_options.push(replace_opt);
             proj_state.selected_opt_idx = Some(replace_options.len() as i32 - 1);
             let _ = app.emit("sync_app_state", proj_state.clone());
@@ -747,13 +779,17 @@ fn rename_replace_option(
     }
     let mut proj_state = state.lock().map_err(|e| e.to_string())?;
     if let Some(rule_index) = proj_state.selected_rule_idx {
+        let term_seq_length = proj_state.rules[rule_index as usize].term_seq_length;
         let replace_options = &mut proj_state
             .rules
             .get_mut(rule_index as usize)
             .unwrap()
             .replace_options;
+        let opt_vec: Vec<&str> = new_opt.split_whitespace().map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+        let new_opt = opt_vec.join(" ");
         if opt_index >= 0
             && opt_index < replace_options.len() as i32
+            && opt_vec.len() == term_seq_length
             && !replace_options.iter().any(|w| w == &new_opt)
         {
             replace_options[opt_index as usize] = new_opt;
@@ -1076,14 +1112,17 @@ fn save_textgrids(
             let mut new_tg = item.tg_content.clone();
             for (i, mark_idx) in item.found_mark_idxs.iter().enumerate() {
                 if let Some(opt_idx) = item.selected_options[i] {
-                    new_tg
-                        .items
-                        .get_mut(1)
-                        .unwrap()
-                        .intervals
-                        .get_mut(*mark_idx)
-                        .unwrap()
-                        .text = opts[opt_idx as usize].clone();
+                    let opt = opts[opt_idx as usize].split_whitespace().collect::<Vec<_>>();
+                    for j in 0..opt.len() {
+                        new_tg
+                            .items
+                            .get_mut(1)
+                            .unwrap()
+                            .intervals
+                            .get_mut(*mark_idx + j)
+                            .unwrap()
+                            .text = opt[j].to_string();
+                    }
                 }
             }
             if app_settings.auto_backup {
@@ -1372,8 +1411,8 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_fs::init())
-        .plugin(tauri_plugin_shell::init())
+        // .plugin(tauri_plugin_fs::init())
+        // .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
             println!("{}, {argv:?}, {cwd}", app.package_info().name);
             app.emit("single-instance", Payload { args: argv, cwd }).unwrap();
