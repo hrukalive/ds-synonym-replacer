@@ -408,7 +408,7 @@ fn find_marks(rule: &ReplaceRule, tg: &TextGrid) -> (Vec<usize>, Vec<String>) {
     let mut found_mark_idxs = Vec::new();
     let mut found_mark_titles = Vec::new();
     let tg_words = &tg.items.get(0).unwrap().intervals;
-    let tg_phones = &tg.items.get(1).unwrap().intervals;
+    let tg_phones = &tg.items.get(if tg.items.len() > 1 { 1 } else { 0 }).unwrap().intervals;
     let mut corr_words = Vec::new();
     let mut i = 0;
     for (w_i, word) in tg_words.iter().enumerate() {
@@ -1110,13 +1110,14 @@ fn save_textgrids(
         if item.dirty {
             let opts = &item.replace_options;
             let mut new_tg = item.tg_content.clone();
+            let phone_idx = if new_tg.items.len() > 1 { 1 } else { 0 };
             for (i, mark_idx) in item.found_mark_idxs.iter().enumerate() {
                 if let Some(opt_idx) = item.selected_options[i] {
                     let opt = opts[opt_idx as usize].split_whitespace().collect::<Vec<_>>();
                     for j in 0..opt.len() {
                         new_tg
                             .items
-                            .get_mut(1)
+                            .get_mut(phone_idx)
                             .unwrap()
                             .intervals
                             .get_mut(*mark_idx + j)
@@ -1207,7 +1208,7 @@ fn play_selected(
             if let Some(wav_file) = &item.wav_file {
                 let tx = tx.lock().map_err(|e| e.to_string())?;
                 let tg = &item.tg_content;
-                let phones = &tg.items[1].intervals[item.found_mark_idxs[mark_index as usize]];
+                let phones = &tg.items[if tg.items.len() > 1 { 1 } else { 0 }].intervals[item.found_mark_idxs[mark_index as usize]];
                 tx.send(SoundCommand::Play(
                     wav_file.clone(),
                     (phones.xmin * 1000. - 300.) as u64,
