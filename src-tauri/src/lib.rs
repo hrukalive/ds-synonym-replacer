@@ -217,6 +217,7 @@ struct ItemRecord {
     found_mark_idxs: Vec<usize>,
     found_mark_titles: Vec<String>,
     replace_options: Vec<String>,
+    term_seq_length: usize,
     selected_options: Vec<Option<i32>>,
     original_options: Vec<Option<i32>>,
     dirty: bool,
@@ -431,7 +432,7 @@ fn find_marks(rule: &ReplaceRule, tg: &TextGrid) -> (Vec<usize>, Vec<String>) {
                     if corr_words.len() == tg_phones.len() {
                         let mut rel_words: Vec<(usize, String)> = corr_words[i..i + rule.term_seq_length].to_vec();
                         rel_words.dedup_by_key(|x| x.0);
-                        title.push_str(format!("({}) ", rel_words.iter().map(|w| w.1.clone()).collect::<Vec<String>>().join(" ")).as_str());
+                        title.push_str(format!("({}) ", rel_words.iter().map(|w| w.1.split(":").next().unwrap().to_string()).collect::<Vec<String>>().join(" ")).as_str());
                     }
                     for j in max(0, i as i32 - 2) as usize..i {
                         title.push_str((tg_phones[j].text.clone() + " ").as_str());
@@ -1075,6 +1076,7 @@ fn list_items(
                                     },
                                     selected_options: vec![None; found_mark_idxs.len()],
                                     original_options: vec![None; found_mark_idxs.len()],
+                                    term_seq_length: active_rule.term_seq_length,
                                     replace_options: active_rule.replace_options.clone(),
                                     found_mark_idxs,
                                     found_mark_titles,
@@ -1208,11 +1210,12 @@ fn play_selected(
             if let Some(wav_file) = &item.wav_file {
                 let tx = tx.lock().map_err(|e| e.to_string())?;
                 let tg = &item.tg_content;
-                let phones = &tg.items[if tg.items.len() > 1 { 1 } else { 0 }].intervals[item.found_mark_idxs[mark_index as usize]];
+                let phone_begin = &tg.items[if tg.items.len() > 1 { 1 } else { 0 }].intervals[item.found_mark_idxs[mark_index as usize]];
+                let phone_end = &tg.items[tg.items.len() - 1].intervals[item.found_mark_idxs[mark_index as usize] + item.term_seq_length - 1];
                 tx.send(SoundCommand::Play(
                     wav_file.clone(),
-                    (phones.xmin * 1000. - 300.) as u64,
-                    (300. + 600. + (phones.xmax - phones.xmin) * 1000.) as u64,
+                    (phone_begin.xmin * 1000. - 300.) as u64,
+                    (300. + 600. + (phone_end.xmax - phone_begin.xmin) * 1000.) as u64,
                     app_settings.volume_factor,
                 ))
                 .map_err(|e| e.to_string())?;
