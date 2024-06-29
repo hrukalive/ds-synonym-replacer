@@ -1117,6 +1117,9 @@ fn save_textgrids(
                 if let Some(opt_idx) = item.selected_options[i] {
                     let opt = opts[opt_idx as usize].split_whitespace().collect::<Vec<_>>();
                     for j in 0..opt.len() {
+                        if opt[j] == "*" {
+                            continue;
+                        }
                         new_tg
                             .items
                             .get_mut(phone_idx)
@@ -1427,6 +1430,11 @@ pub fn run() {
             let mut store = StoreBuilder::new("settings.json").build(app.handle().clone());
             let _ = store.load();
             let app_settings = AppSettings::load_from_store(&store);
+            // {
+            //     let window = app.get_webview_window("main").unwrap();
+            //     window.open_devtools();
+            //     window.close_devtools();
+            // }
             match app_settings {
                 Ok(app_settings) => {
                     match app_settings.sound_device {

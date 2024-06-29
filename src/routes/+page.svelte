@@ -137,7 +137,13 @@
 			defaultPath: await invoke('get_default_paths')[1],
 		});
 		if (folderPath !== null) {
-			await invoke('open_folder', { folderPath, target });
+			loading_modal.showModal();
+			try {
+				await invoke('open_folder', { folderPath, target });
+			} catch (e) {
+				console.error(e);
+				loading_modal.close();
+			}
 		}
 	}
 
@@ -210,6 +216,7 @@
 		} else {
 			console.error('Invalid payload for sync_folder_state event');
 		}
+		loading_modal.close();
 	});
 
 	listen('sync_app_state', (event) => {
@@ -278,8 +285,8 @@
 	})
 
 	listen('sync_item_selection_state', (event) => {
+		// console.log('sync_item_selection_state', event.payload);
 		if (event.payload !== null && event.payload !== undefined) {
-			// console.log('sync_item_selection_state', event.payload);
 			if (event.payload[0] === null) {
 				event.payload[0] = -1;
 			}
@@ -682,7 +689,7 @@
 							{#each $items as item, itemIndex}
 								<li class="group h-8">
 									<div class="flex h-full pl-0">
-										<input type="radio" name="item-selection" class="flex-1 btn btn-sm btn-block btn-ghost justify-start transition-all" checked={selectedItemIdx === itemIndex} aria-label={`${item.dirty?"*":""}${item.tg_stem}`} value={itemIndex}  onclick={() => selectItem(itemIndex)}/>
+										<input type="radio" name="item-selection" class="flex-1 btn btn-sm btn-block btn-ghost justify-start transition-all" checked={selectedItemIdx === itemIndex} aria-label={`${item.dirty?"● ":""}${item.tg_stem}`} value={itemIndex}  onclick={() => selectItem(itemIndex)}/>
 									</div>
 								</li>
 							{/each}
